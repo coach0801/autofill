@@ -75,11 +75,12 @@
     return clone.textContent || '';
   }
 
-  function textOfIds(idList) {
+  function textOfIds(idList, root) {
+    const scope = root && root.getElementById ? root : document;
     const parts = [];
     (idList || '').split(/\s+/).forEach((id) => {
       if (!id) return;
-      const n = document.getElementById(id);
+      const n = scope.getElementById(id);
       if (n) parts.push(cleanText(n));
     });
     return parts.join(' ');
@@ -136,14 +137,15 @@
 
   /** Human-visible label text for a single control. */
   function getLabelText(el) {
+    const root = el.getRootNode(); // document, or the ShadowRoot the control lives in
     const parts = [];
     const aria = el.getAttribute('aria-label');
     if (aria) parts.push(aria);
     const labelledBy = el.getAttribute('aria-labelledby');
-    if (labelledBy) parts.push(textOfIds(labelledBy));
+    if (labelledBy) parts.push(textOfIds(labelledBy, root));
     if (el.id) {
       try {
-        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        const lab = root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
         if (lab) parts.push(cleanText(lab));
       } catch (e) { /* bad id */ }
     }
@@ -174,7 +176,7 @@
   function getOptionLabel(input) {
     if (input.id) {
       try {
-        const l = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        const l = input.getRootNode().querySelector(`label[for="${CSS.escape(input.id)}"]`);
         if (l) return cleanText(l);
       } catch (e) { /* ignore */ }
     }
@@ -202,7 +204,7 @@
       if (aria) return aria;
       const lb = rg.getAttribute('aria-labelledby');
       if (lb) {
-        const t = textOfIds(lb);
+        const t = textOfIds(lb, first.getRootNode());
         if (t.trim()) return t;
       }
     }
@@ -351,8 +353,16 @@
   // ---------------------------------------------------------------------
 
   function fillText(el, value) {
-    if (el.value && el.value.trim()) return norm(el.value) === norm(value); // never overwrite user input
     let v = String(value);
+    const existing = (el.value || '').trim();
+    if (existing) {
+      // International phone widgets (ADP, intl-tel-input, ...) pre-fill the
+      // input with just a dial code like "+1". Complete it instead of
+      // treating the field as already answered.
+      const dialCodeOnly = /^\+\d{0,4}$/.test(existing);
+      if (!dialCodeOnly) return norm(existing) === norm(v); // never overwrite user input
+      if (!v.startsWith('+') && /^[\d\s().-]{7,}$/.test(v)) v = existing + ' ' + v;
+    }
     if (el.type === 'number') {
       // Strip currency formatting first so "$120,000" becomes 120000, not 120.
       const m = v.replace(/[,\s]/g, '').match(/-?\d+(\.\d+)?/);
@@ -501,10 +511,11 @@
     setNativeValue(input, desired);
     input.dispatchEvent(new InputEvent('input', { bubbles: true, data: desired }));
     await sleep(600);
+    const inputRoot = input.getRootNode();
     const listId = input.getAttribute('aria-controls') || input.getAttribute('aria-owns');
-    let scope = document;
-    if (listId) {
-      const list = document.getElementById(listId.split(/\s+/)[0]);
+    let scope = inputRoot.querySelector ? inputRoot : document;
+    if (listId && inputRoot.getElementById) {
+      const list = inputRoot.getElementById(listId.split(/\s+/)[0]);
       if (list) scope = list;
     }
     const options = [...scope.querySelectorAll('[role="option"]')].filter(isElementVisible);
@@ -711,13 +722,33 @@
   // Main fill pass
   // ---------------------------------------------------------------------
 
+  /**
+   * All form controls on the page, including ones inside open shadow roots —
+   * ADP WorkforceNow, Workday and other modern ATSes render fields inside web
+   * components that document.querySelectorAll cannot see.
+   */
+  function collectControls() {
+    const out = [];
+    const walk = (root) => {
+      let all;
+      try { all = root.querySelectorAll('*'); } catch (e) { return; }
+      for (const el of all) {
+        const tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') out.push(el);
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    return out;
+  }
+
   async function runFill(profile, { auto = false } = {}) {
     const stats = { filled: 0, matched: 0 };
     if (!profile) return stats;
 
     const seenRadioGroups = new Set();
     const seenCheckboxGroups = new Set();
-    const controls = [...document.querySelectorAll('input, textarea, select')];
+    const controls = collectControls();
 
     for (const el of controls) {
       try {
@@ -742,7 +773,7 @@
 
         // ---- radio groups (process once per group) ----
         if (type === 'radio') {
-          const root = el.form || document;
+          const root = el.form || el.getRootNode();
           const groupKey = (el.form ? 'f' : 'd') + ':' + el.name;
           if (el.name && seenRadioGroups.has(groupKey)) continue;
           if (el.name) seenRadioGroups.add(groupKey);
@@ -771,7 +802,7 @@
             const groupKey = (el.form ? 'f' : 'd') + ':' + el.name;
             if (seenCheckboxGroups.has(groupKey)) continue;
             seenCheckboxGroups.add(groupKey);
-            const root = el.form || document;
+            const root = el.form || el.getRootNode();
             const boxes = [...root.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`)].filter(isUsable);
             if (boxes.length > 1) {
               let groupValue = null;
