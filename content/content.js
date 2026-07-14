@@ -156,15 +156,15 @@
     return input.value || '';
   }
 
-  /** Question text for a radio group. */
-  function getGroupLabel(radios) {
-    const first = radios[0];
+  /** Question text for a radio/checkbox group. */
+  function getGroupLabel(inputs) {
+    const first = inputs[0];
     const fs = first.closest('fieldset');
     if (fs) {
       const lg = fs.querySelector('legend');
       if (lg && cleanText(lg).trim()) return cleanText(lg);
     }
-    const rg = first.closest('[role="radiogroup"]');
+    const rg = first.closest('[role="radiogroup"], [role="group"]');
     if (rg) {
       const aria = rg.getAttribute('aria-label');
       if (aria) return aria;
@@ -174,19 +174,29 @@
         if (t.trim()) return t;
       }
     }
-    // Common ancestor of the whole group, minus the option labels themselves.
+    // Start at the tightest ancestor containing the whole group, then keep
+    // walking up until real question text appears. Many ATSes (Lever,
+    // Greenhouse boards, ...) render the question in a sibling <div> two or
+    // three levels above the options list, so the tightest ancestor holds
+    // nothing but the option labels themselves.
     let anc = first.parentElement;
-    while (anc && anc !== document.body && !radios.every((r) => anc.contains(r))) {
+    while (anc && anc !== document.body && !inputs.every((r) => anc.contains(r))) {
       anc = anc.parentElement;
     }
-    if (anc && anc !== document.body) {
+    for (let depth = 0; depth < 4 && anc && anc !== document.body; depth++) {
+      // Stop before absorbing a container that also holds OTHER questions'
+      // fields — their text would pollute this group's question.
+      const foreign = [...anc.querySelectorAll('input, select, textarea')]
+        .some((c) => c.type !== 'hidden' && !inputs.includes(c));
+      if (foreign) break;
       let full = cleanText(anc).trim();
-      for (const r of radios) {
+      for (const r of inputs) {
         const ol = (getOptionLabel(r) || '').trim();
         if (ol) full = full.replace(ol, ' ');
       }
       full = full.replace(/\s+/g, ' ').trim();
       if (full) return full.slice(0, 300);
+      anc = anc.parentElement;
     }
     return findNearbyText(first);
   }
@@ -377,6 +387,34 @@
     return true;
   }
 
+  /**
+   * "Check all that apply" groups (several checkboxes sharing a name). The
+   * configured answer may hold several values separated by ";" or ",".
+   */
+  function fillCheckboxGroup(boxes, desired) {
+    if (boxes.some((b) => b.checked)) return false; // already answered
+    const parts = String(desired).split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+    let any = false;
+    for (const part of parts) {
+      let best = null;
+      let bestScore = 0;
+      for (const b of boxes) {
+        const s = matchScore(getOptionLabel(b), part);
+        if (s > bestScore) { best = b; bestScore = s; }
+      }
+      if (best && bestScore >= 60 && !best.checked) {
+        best.click();
+        if (!best.checked) {
+          best.checked = true;
+          fireEvents(best, { blur: false });
+        }
+        flash(best.closest('label') || best);
+        any = true;
+      }
+    }
+    return any;
+  }
+
   function dataUrlToFile(fileData) {
     const [meta, b64] = fileData.dataUrl.split(',');
     const mime = fileData.type || (meta.match(/data:(.*?)[;,]/) || [])[1] || 'application/octet-stream';
@@ -562,6 +600,7 @@
     if (!profile) return stats;
 
     const seenRadioGroups = new Set();
+    const seenCheckboxGroups = new Set();
     const controls = [...document.querySelectorAll('input, textarea, select')];
 
     for (const el of controls) {
@@ -605,11 +644,35 @@
           continue;
         }
 
-        // ---- checkboxes: only via explicit custom answers; never consent boxes via rules ----
+        // ---- checkboxes ----
         if (type === 'checkbox') {
+          // Several checkboxes sharing a name = a "check all that apply"
+          // question; use the group's question text, like radio groups.
+          if (el.name) {
+            const groupKey = (el.form ? 'f' : 'd') + ':' + el.name;
+            if (seenCheckboxGroups.has(groupKey)) continue;
+            seenCheckboxGroups.add(groupKey);
+            const root = el.form || document;
+            const boxes = [...root.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`)].filter(isUsable);
+            if (boxes.length > 1) {
+              const groupHay = norm(getGroupLabel(boxes) + ' ' + getAttrText(el));
+              let groupValue = customAnswerFor(groupHay, profile);
+              if (!groupValue && !CONSENT_RE.test(groupHay)) {
+                const resolved = resolveValue(groupHay, profile);
+                if (resolved) groupValue = resolved.value;
+              }
+              if (groupValue) {
+                stats.matched++;
+                if (fillCheckboxGroup(boxes, groupValue)) stats.filled++;
+              }
+              if (auto) boxes.forEach((b) => autoProcessed.add(b));
+              continue;
+            }
+          }
+          // Single checkbox: explicit custom answers always apply; built-in
+          // rules apply too, but never to consent/terms boxes.
           const hay = getHaystack(el);
-          const custom = customAnswerFor(hay, profile);
-          let value = custom;
+          let value = customAnswerFor(hay, profile);
           if (!value && !CONSENT_RE.test(hay)) {
             const resolved = resolveValue(hay, profile);
             if (resolved) value = resolved.value;
