@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Job AutoFill</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Job AutoFill</h1>
+  </header>
+
+  <div id="setup-warning" hidden>
+    <p>Your profile is empty. Set it up first so there is something to fill.</p>
+  </div>
+
+  <div class="completeness" id="completeness-wrap" hidden>
+    <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+    <span id="completeness-text"></span>
+  </div>
+
+  <button id="fill-btn">Fill this page</button>
+  <p id="status" role="status"></p>
+
+  <label class="toggle">
+    <input type="checkbox" id="auto-toggle" />
+    <span>Auto-fill job pages</span>
+  </label>
+
+  <footer>
+    <a href="#" id="open-options">Edit profile &amp; answers</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

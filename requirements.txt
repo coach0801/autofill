@@ -1,0 +1,5 @@
+I intend to create a Chrome extension that performs the same functions as Jobright Autofill.
+https://chromewebstore.google.com/detail/jobright-autofill-%E2%80%93-insta/odcnpipkhjegpefkfplmedhmkmmhmoko
+
+In other words, when a user opens a job application page in a Chrome browser tab, the extension should automatically input and upload data pre-configured within its settings.
+This includes tasks such as entering text directly into input fields, selecting the correct options from lists, answering questions, uploading resumes, and selecting or entering country codes.

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job AutoFill — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <header>
+    <h1>Job AutoFill</h1>
+    <p class="subtitle">Everything you save here is stored locally in your browser and used to fill job application forms.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Behavior</h2>
+      <label class="check-row">
+        <input type="checkbox" id="setting-autoFill" />
+        <span>Automatically fill forms when a job application page is detected</span>
+      </label>
+      <p class="hint">You can always fill manually from the toolbar popup or the right-click menu. The extension never submits a form for you.</p>
+    </section>
+
+    <section>
+      <h2>Personal information</h2>
+      <div class="grid">
+        <label>First name <input type="text" id="firstName" autocomplete="off" /></label>
+        <label>Middle name <input type="text" id="middleName" autocomplete="off" /></label>
+        <label>Last name <input type="text" id="lastName" autocomplete="off" /></label>
+        <label>Email <input type="email" id="email" autocomplete="off" /></label>
+        <label>Phone country code <input type="text" id="phoneCountryCode" placeholder="+1" autocomplete="off" /></label>
+        <label>Phone number <input type="tel" id="phone" autocomplete="off" /></label>
+        <label>Pronouns <input type="text" id="pronouns" placeholder="e.g. they/them" autocomplete="off" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Address</h2>
+      <div class="grid">
+        <label>Address line 1 <input type="text" id="addressLine1" autocomplete="off" /></label>
+        <label>Address line 2 <input type="text" id="addressLine2" autocomplete="off" /></label>
+        <label>City <input type="text" id="city" autocomplete="off" /></label>
+        <label>State / Province <input type="text" id="state" autocomplete="off" /></label>
+        <label>ZIP / Postal code <input type="text" id="zip" autocomplete="off" /></label>
+        <label>Country <input type="text" id="country" placeholder="e.g. United States" autocomplete="off" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Links</h2>
+      <div class="grid">
+        <label>LinkedIn <input type="url" id="linkedin" placeholder="https://linkedin.com/in/..." autocomplete="off" /></label>
+        <label>GitHub <input type="url" id="github" autocomplete="off" /></label>
+        <label>Portfolio / Website <input type="url" id="portfolio" autocomplete="off" /></label>
+        <label>Twitter / X <input type="url" id="twitter" autocomplete="off" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Work</h2>
+      <div class="grid">
+        <label>Current / most recent company <input type="text" id="currentCompany" autocomplete="off" /></label>
+        <label>Current / most recent title <input type="text" id="currentTitle" autocomplete="off" /></label>
+        <label>Years of experience <input type="text" id="yearsOfExperience" placeholder="e.g. 5" autocomplete="off" /></label>
+        <label>Salary expectation <input type="text" id="salaryExpectation" placeholder="e.g. 120000" autocomplete="off" /></label>
+        <label>Notice period <input type="text" id="noticePeriod" placeholder="e.g. 2 weeks" autocomplete="off" /></label>
+        <label>Earliest start date <input type="date" id="availableDate" /></label>
+        <label>How did you hear about us? <input type="text" id="howDidYouHear" placeholder="e.g. LinkedIn" autocomplete="off" /></label>
+      </div>
+      <label class="full">Default cover letter / "Why do you want to work here?"
+        <textarea id="coverLetter" rows="6" placeholder="Used for cover-letter text boxes."></textarea>
+      </label>
+    </section>
+
+    <section>
+      <h2>Education</h2>
+      <div class="grid">
+        <label>School / University <input type="text" id="school" autocomplete="off" /></label>
+        <label>Degree <input type="text" id="degree" placeholder="e.g. Bachelor's Degree" autocomplete="off" /></label>
+        <label>Field of study / Major <input type="text" id="major" autocomplete="off" /></label>
+        <label>Graduation year <input type="text" id="graduationYear" autocomplete="off" /></label>
+        <label>GPA <input type="text" id="gpa" autocomplete="off" /></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Eligibility questions</h2>
+      <div class="grid">
+        <label>Are you legally authorized to work?
+          <select id="authorizedToWork">
+            <option value=""></option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </label>
+        <label>Will you require visa sponsorship?
+          <select id="requiresSponsorship">
+            <option value=""></option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </label>
+        <label>Willing to relocate?
+          <select id="willingToRelocate">
+            <option value=""></option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </label>
+        <label>Are you 18 or older?
+          <select id="over18">
+            <option value=""></option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Voluntary self-identification (EEO)</h2>
+      <p class="hint">Leave any of these blank to skip those questions entirely.</p>
+      <div class="grid">
+        <label>Gender
+          <select id="gender">
+            <option value=""></option>
+            <option>Male</option>
+            <option>Female</option>
+            <option>Non-binary</option>
+            <option>Prefer not to say</option>
+          </select>
+        </label>
+        <label>Hispanic or Latino?
+          <select id="hispanic">
+            <option value=""></option>
+            <option>Yes</option>
+            <option>No</option>
+            <option>Prefer not to say</option>
+          </select>
+        </label>
+        <label>Race / Ethnicity
+          <select id="race">
+            <option value=""></option>
+            <option>American Indian or Alaska Native</option>
+            <option>Asian</option>
+            <option>Black or African American</option>
+            <option>Hispanic or Latino</option>
+            <option>Native Hawaiian or Other Pacific Islander</option>
+            <option>White</option>
+            <option>Two or More Races</option>
+            <option>Prefer not to say</option>
+          </select>
+        </label>
+        <label>Veteran status
+          <select id="veteran">
+            <option value=""></option>
+            <option>I am not a protected veteran</option>
+            <option>I identify as one or more of the classifications of a protected veteran</option>
+            <option>Prefer not to say</option>
+          </select>
+        </label>
+        <label>Disability status
+          <select id="disability">
+            <option value=""></option>
+            <option>No, I do not have a disability</option>
+            <option>Yes, I have a disability</option>
+            <option>Prefer not to say</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Documents</h2>
+      <div class="file-row">
+        <div>
+          <strong>Resume / CV</strong>
+          <p class="file-status" id="resume-status">No file saved.</p>
+        </div>
+        <div class="file-actions">
+          <input type="file" id="resumeFile" accept=".pdf,.doc,.docx,.txt,.rtf" hidden />
+          <button type="button" class="secondary" id="resume-pick">Choose file</button>
+          <button type="button" class="danger" id="resume-remove" hidden>Remove</button>
+        </div>
+      </div>
+      <div class="file-row">
+        <div>
+          <strong>Cover letter file</strong> <span class="hint-inline">(optional)</span>
+          <p class="file-status" id="coverLetterFile-status">No file saved.</p>
+        </div>
+        <div class="file-actions">
+          <input type="file" id="coverLetterFileInput" accept=".pdf,.doc,.docx,.txt,.rtf" hidden />
+          <button type="button" class="secondary" id="coverLetterFile-pick">Choose file</button>
+          <button type="button" class="danger" id="coverLetterFile-remove" hidden>Remove</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Custom questions &amp; answers</h2>
+      <p class="hint">
+        For any other question a form asks (e.g. "Do you have experience with Python?"), add a keyword or phrase from
+        the question on the left and your answer on the right. These take priority over the built-in fields.
+      </p>
+      <div id="qa-list"></div>
+      <button type="button" class="secondary" id="qa-add">+ Add answer</button>
+    </section>
+  </main>
+
+  <footer>
+    <button type="button" id="save">Save settings</button>
+    <span id="save-status" role="status"></span>
+  </footer>
+
+  <template id="qa-row-template">
+    <div class="qa-row">
+      <input type="text" class="qa-question" placeholder="Question contains… (e.g. security clearance)" />
+      <input type="text" class="qa-answer" placeholder="Your answer (e.g. No)" />
+      <button type="button" class="danger qa-remove" title="Remove">✕</button>
+    </div>
+  </template>
+
+  <script src="options.js"></script>
+</body>
+</html>
