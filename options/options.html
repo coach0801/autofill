@@ -69,8 +69,13 @@
         <label>How did you hear about us? <input type="text" id="howDidYouHear" placeholder="e.g. LinkedIn" autocomplete="off" /></label>
       </div>
       <label class="full">Default cover letter / "Why do you want to work here?"
-        <textarea id="coverLetter" rows="6" placeholder="Used for cover-letter text boxes."></textarea>
+        <textarea id="coverLetter" rows="6" placeholder="Used for cover-letter text boxes. You can write {job_title} or {company} anywhere — they are replaced with the job title / company detected on the page."></textarea>
       </label>
+      <p class="hint">
+        Tip: <code>{job_title}</code> and <code>{company}</code> are replaced with the job title / company detected on
+        the application page (this also works in custom answers below). If you leave the cover letter empty, a short
+        default letter mentioning the job title and your name is used.
+      </p>
     </section>
 
     <section>

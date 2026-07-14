@@ -528,6 +528,50 @@
   }
 
   // ---------------------------------------------------------------------
+  // Page context: job title / company for {job_title} and {company}
+  // ---------------------------------------------------------------------
+
+  let cachedJobTitle = null;
+  function detectJobTitle() {
+    if (cachedJobTitle !== null) return cachedJobTitle;
+    const firstPart = (s) => (s || '').split(/\s[|•·–—-]\s/)[0].replace(/\s+/g, ' ').trim();
+    let t = '';
+    // Prefer explicit job-title elements, then the page heading, then metadata.
+    for (const sel of ['[class*="job-title" i]', '[class*="jobtitle" i]', '[data-qa="posting-name"]', '.posting-headline h2', '.app-title', 'h1']) {
+      const el = document.querySelector(sel);
+      if (el) {
+        t = firstPart(el.innerText);
+        if (t) break;
+      }
+    }
+    if (!t) {
+      const og = document.querySelector('meta[property="og:title"]');
+      if (og && og.content) t = firstPart(og.content);
+    }
+    if (!t) t = firstPart(document.title);
+    cachedJobTitle = t.slice(0, 120);
+    return cachedJobTitle;
+  }
+
+  let cachedCompany = null;
+  function detectCompany() {
+    if (cachedCompany !== null) return cachedCompany;
+    const og = document.querySelector('meta[property="og:site_name"]');
+    cachedCompany = og && og.content ? og.content.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+    return cachedCompany;
+  }
+
+  /** Replace {job_title} / {role} / {position} / {company} in configured text. */
+  function applyPlaceholders(text) {
+    let out = String(text);
+    if (out.indexOf('{') !== -1) {
+      out = out.replace(/\{(?:job[ _-]?title|job[ _-]?role|role|position)\}/gi, () => detectJobTitle() || 'this role');
+      out = out.replace(/\{company\}/gi, () => detectCompany() || 'your company');
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
   // Field rules: what is this field asking for?
   // ---------------------------------------------------------------------
 
@@ -535,13 +579,13 @@
   // normalized haystack; `not` vetoes a match.
   const RULES = [
     { key: 'email', re: /e ?mail/, get: (p) => p.email },
-    { key: 'firstName', re: /first ?name|given ?name|\bfname\b|\bforename\b/, get: (p) => p.firstName },
-    { key: 'middleName', re: /middle ?name|\bmname\b/, get: (p) => p.middleName },
-    { key: 'lastName', re: /last ?name|family ?name|\bsurname\b|\blname\b/, get: (p) => p.lastName },
+    { key: 'firstName', re: /first ?name|given ?name|\bfname\b|\bforename\b/, not: /referr/, get: (p) => p.firstName },
+    { key: 'middleName', re: /middle ?name|\bmname\b/, not: /referr/, get: (p) => p.middleName },
+    { key: 'lastName', re: /last ?name|family ?name|\bsurname\b|\blname\b/, not: /referr/, get: (p) => p.lastName },
     {
       key: 'fullName',
       re: /full ?name|legal ?name|complete name|candidate name|applicant name|your name|\bname\b/,
-      not: /company|employer|school|university|user ?name|file|contact|manager|reference|first|last|middle|nick|maiden|login|host/,
+      not: /company|employer|school|university|user ?name|file|contact|manager|referr|reference|first|last|middle|nick|maiden|login|host/,
       get: (p) => [p.firstName, p.lastName].filter(Boolean).join(' '),
     },
     { key: 'phoneCountryCode', re: /country code|dial(ing)? code|phone code|calling code|phone country/, get: (p) => p.phoneCountryCode },
@@ -589,7 +633,12 @@
     { key: 'major', re: /\bmajor\b|field of study|discipline|concentration|area of study/, get: (p) => p.major },
     { key: 'graduationYear', re: /graduation|grad year|year of completion/, get: (p) => p.graduationYear },
     { key: 'gpa', re: /\bgpa\b|grade point/, get: (p) => p.gpa },
-    { key: 'coverLetter', re: /cover ?letter|why (do you want|are you interested|would you like)|motivation letter|tell us why/, get: (p) => p.coverLetter },
+    {
+      key: 'coverLetter',
+      re: /cover ?letter|why (do you want|are you interested|would you like)|motivation letter|tell us why/,
+      get: (p) => p.coverLetter
+        || `Dear Hiring Manager,\n\nI am excited to apply for the {job_title} position. My background and experience align closely with the requirements of this role, and I am confident I can contribute meaningfully to your team.\n\nThank you for your time and consideration.\n\nSincerely,\n${[p.firstName, p.lastName].filter(Boolean).join(' ')}`,
+    },
     { key: 'howDidYouHear', re: /how did you (hear|find|learn)|hear about (us|this)|referral source|where did you (hear|find)/, get: (p) => p.howDidYouHear },
     { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
@@ -634,7 +683,7 @@
       }
       if (score > bestScore) { best = answer; bestScore = score; }
     }
-    return bestScore >= 65 ? best : null;
+    return bestScore >= 65 ? applyPlaceholders(best) : null;
   }
 
   /** Resolve the value a field should get, or null. */
@@ -646,7 +695,7 @@
       if (!rule.re.test(hay)) continue;
       if (rule.not && rule.not.test(hay)) continue;
       const v = (rule.get(profile) || '').toString().trim();
-      if (v) return { value: v, source: rule.key };
+      if (v) return { value: applyPlaceholders(v), source: rule.key };
     }
     return null;
   }
