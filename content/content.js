@@ -85,21 +85,53 @@
     return parts.join(' ');
   }
 
-  /** Nearby text fallback: walk up a few ancestors looking at previous siblings for short label-like text. */
+  /**
+   * Nearby text fallback: walk up a few ancestors looking at previous
+   * siblings for short label-like text. Checks bare TEXT NODES too — forms
+   * like "Name<input>" put the label in a text node, and skipping it would
+   * make us walk up and absorb unrelated text from surrounding sections.
+   */
   function findNearbyText(el) {
     let node = el;
     for (let depth = 0; depth < 4 && node && node !== document.body; depth++) {
-      let sib = node.previousElementSibling;
+      let sib = node.previousSibling;
       let hops = 0;
-      while (sib && hops < 3) {
-        const t = cleanText(sib).trim();
-        if (t && t.length <= 220) return t;
-        sib = sib.previousElementSibling;
+      while (sib && hops < 4) {
+        let t = '';
+        if (sib.nodeType === Node.TEXT_NODE) t = (sib.textContent || '').trim();
+        else if (sib.nodeType === Node.ELEMENT_NODE) t = cleanText(sib).trim();
+        if (t && t.length <= 160) return t;
+        sib = sib.previousSibling;
         hops++;
       }
       node = node.parentElement;
     }
     return '';
+  }
+
+  /**
+   * Heading text above a control. Some forms (JazzHR EEO sections, ...) put
+   * the real question in a heading a section or two above the options, while
+   * the group's own label is a generic "Please check one of the boxes below".
+   */
+  function headingContext(el) {
+    const texts = [];
+    let node = el;
+    for (let depth = 0; depth < 5 && node && node !== document.body && texts.length < 2; depth++) {
+      let sib = node.previousElementSibling;
+      let hops = 0;
+      while (sib && hops < 6 && texts.length < 2) {
+        let h = null;
+        if (/^(H[1-6]|LEGEND|STRONG|B|TH|LABEL)$/.test(sib.tagName)) h = sib;
+        else if (sib.querySelector) h = sib.querySelector('h1,h2,h3,h4,h5,h6,legend,strong,b,[role="heading"]');
+        const t = h ? cleanText(h).trim() : '';
+        if (t && t.length <= 200 && !texts.includes(t)) texts.push(t);
+        sib = sib.previousElementSibling;
+        hops++;
+      }
+      node = node.parentElement;
+    }
+    return texts.join(' ');
   }
 
   /** Human-visible label text for a single control. */
@@ -328,6 +360,8 @@
       v = m[0];
     }
     if (el.type === 'date') {
+      const us = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (us) v = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
     }
     if (el.maxLength > 0 && v.length > el.maxLength) v = v.slice(0, el.maxLength);
@@ -357,14 +391,20 @@
   }
 
   function fillRadioGroup(radios, desired) {
-    if (radios.some((r) => r.checked)) return false; // already answered
     let best = null;
     let bestScore = 0;
     for (const r of radios) {
       const s = matchScore(getOptionLabel(r), desired);
       if (s > bestScore) { best = r; bestScore = s; }
     }
-    if (!best || bestScore < 60) return false;
+    if (!best) return false;
+    const checked = radios.find((r) => r.checked);
+    if (checked === best) return false;
+    // An unanswered group fills at the normal threshold. Overriding an
+    // already-selected option (many ATSes preselect "I don't wish to answer"
+    // on EEO questions) requires a stronger match.
+    const threshold = checked ? 75 : 60;
+    if (bestScore < threshold) return false;
     best.click();
     if (!best.checked) {
       best.checked = true;
@@ -500,8 +540,8 @@
     { key: 'lastName', re: /last ?name|family ?name|\bsurname\b|\blname\b/, get: (p) => p.lastName },
     {
       key: 'fullName',
-      re: /full ?name|legal ?name|complete name|^name$|^your name$|candidate name|applicant name/,
-      not: /company|employer|school|university|user ?name|file|contact name|manager|reference/,
+      re: /full ?name|legal ?name|complete name|candidate name|applicant name|your name|\bname\b/,
+      not: /company|employer|school|university|user ?name|file|contact|manager|reference|first|last|middle|nick|maiden|login|host/,
       get: (p) => [p.firstName, p.lastName].filter(Boolean).join(' '),
     },
     { key: 'phoneCountryCode', re: /country code|dial(ing)? code|phone code|calling code|phone country/, get: (p) => p.phoneCountryCode },
@@ -518,12 +558,32 @@
     { key: 'state', re: /\bstate\b|province|\bregion\b/, not: /united states|country|statement/, get: (p) => p.state },
     { key: 'country', re: /country|nationality/, not: /code|county/, get: (p) => p.country },
     { key: 'location', re: /location|where (do you|are you) (live|based|located)/, not: /office|preferred|willing/, get: (p) => [p.city, p.state, p.country].filter(Boolean).join(', ') },
+    // EEO / self-identification questions come before work-detail rules: their
+    // surrounding legalese often contains words like "compensation" that would
+    // otherwise trigger the salary rule.
+    { key: 'pronouns', re: /pronoun/, get: (p) => p.pronouns },
+    { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender/, get: (p) => p.gender },
+    { key: 'hispanic', re: /hispanic|latin/, get: (p) => p.hispanic },
+    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic/, get: (p) => p.race },
+    { key: 'veteran', re: /veteran|military status/, get: (p) => p.veteran },
+    { key: 'disability', re: /disabilit|disabled|impairment/, get: (p) => p.disability },
     { key: 'currentCompany', re: /current (company|employer)|company ?name|\bemployer\b|organi[sz]ation|most recent (company|employer)/, get: (p) => p.currentCompany },
     { key: 'currentTitle', re: /(current|job|recent) title|current (role|position)|title of your (current|recent)/, get: (p) => p.currentTitle },
     { key: 'yearsOfExperience', re: /years? of (relevant |work |professional |related )*experience|experience in years|how many years/, get: (p) => p.yearsOfExperience },
-    { key: 'salary', re: /salary|compensation|expected pay|pay (expectation|range)|desired pay|remuneration/, get: (p) => p.salaryExpectation },
+    { key: 'salary', re: /salary|compensation|expected pay|pay (expectation|range)|desired pay|remuneration/, not: /veteran|military|disabilit/, get: (p) => p.salaryExpectation },
     { key: 'noticePeriod', re: /notice period|weeks? of notice/, get: (p) => p.noticePeriod },
     { key: 'availableDate', re: /start date|available to start|earliest (start|date)|availability date|date available|when can you (start|join)/, get: (p) => p.availableDate },
+    // Signature rows ("Name ___  Date ___") at the end of EEO/voluntary forms.
+    {
+      key: 'signatureDate',
+      re: /(^|\s)date(\s|$)|today s date|current date|date signed/,
+      not: /birth|dob|start|end|expir|graduat|available|interview|hire|until|from|candidate/,
+      get: () => {
+        const d = new Date();
+        return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+      },
+    },
+    { key: 'signature', re: /signature/, not: /date/, get: (p) => [p.firstName, p.lastName].filter(Boolean).join(' ') },
     { key: 'school', re: /school|university|college|institution|alma mater/, get: (p) => p.school },
     { key: 'degree', re: /degree|qualification|education level|highest level of education/, get: (p) => p.degree },
     { key: 'major', re: /\bmajor\b|field of study|discipline|concentration|area of study/, get: (p) => p.major },
@@ -535,16 +595,23 @@
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
     { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
-    { key: 'pronouns', re: /pronoun/, get: (p) => p.pronouns },
-    { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender/, get: (p) => p.gender },
-    { key: 'hispanic', re: /hispanic|latin/, get: (p) => p.hispanic },
-    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic/, get: (p) => p.race },
-    { key: 'veteran', re: /veteran|military status/, get: (p) => p.veteran },
-    { key: 'disability', re: /disability|disabled|impairment/, get: (p) => p.disability },
   ];
 
   /** Consent-style checkboxes we never touch unless a custom answer explicitly matches. */
-  const CONSENT_RE = /agree|terms|privacy|consent|acknowledg|certif|signature|subscribe|newsletter|policy|gdpr/;
+  const CONSENT_RE = /agree|terms|privacy|consent|acknowledg|certif|signature|subscribe|newsletter|policy|gdpr|captcha|robot|human check/;
+
+  /**
+   * Haystacks to try for an option group, most specific first: the group's
+   * own label, then the label plus nearby heading context (for forms whose
+   * real question lives in a heading above a generic "check one" prompt).
+   */
+  function groupHays(inputs) {
+    const base = norm(getGroupLabel(inputs) + ' ' + getAttrText(inputs[0]));
+    const hays = base ? [base] : [];
+    const heading = norm(headingContext(inputs[0]));
+    if (heading) hays.push((heading + ' ' + base).trim());
+    return hays;
+  }
 
   /** User-defined Q&A pairs win over built-in rules. */
   function customAnswerFor(hay, profile) {
@@ -634,8 +701,11 @@
             ? [...root.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)].filter(isUsable)
             : [el];
           if (!radios.length) continue;
-          const hay = norm(getGroupLabel(radios) + ' ' + getAttrText(el));
-          const resolved = resolveValue(hay, profile);
+          let resolved = null;
+          for (const hay of groupHays(radios)) {
+            resolved = resolveValue(hay, profile);
+            if (resolved) break;
+          }
           if (resolved) {
             stats.matched++;
             if (fillRadioGroup(radios, resolved.value)) stats.filled++;
@@ -655,11 +725,14 @@
             const root = el.form || document;
             const boxes = [...root.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`)].filter(isUsable);
             if (boxes.length > 1) {
-              const groupHay = norm(getGroupLabel(boxes) + ' ' + getAttrText(el));
-              let groupValue = customAnswerFor(groupHay, profile);
-              if (!groupValue && !CONSENT_RE.test(groupHay)) {
-                const resolved = resolveValue(groupHay, profile);
-                if (resolved) groupValue = resolved.value;
+              let groupValue = null;
+              for (const groupHay of groupHays(boxes)) {
+                groupValue = customAnswerFor(groupHay, profile);
+                if (!groupValue && !CONSENT_RE.test(groupHay)) {
+                  const resolved = resolveValue(groupHay, profile);
+                  if (resolved) groupValue = resolved.value;
+                }
+                if (groupValue) break;
               }
               if (groupValue) {
                 stats.matched++;
