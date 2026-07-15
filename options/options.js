@@ -10,7 +10,7 @@
     'noticePeriod', 'availableDate', 'howDidYouHear', 'coverLetter',
     'school', 'degree', 'major', 'graduationYear', 'gpa',
     'authorizedToWork', 'requiresSponsorship', 'willingToRelocate', 'over18',
-    'gender', 'hispanic', 'race', 'veteran', 'disability',
+    'gender', 'hispanic', 'race', 'veteran', 'disability', 'sexualOrientation', 'communities',
   ];
 
   const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8 MB

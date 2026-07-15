@@ -719,6 +719,8 @@
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
     // EEO sections end with "Name ___ Date ___" signature rows whose context
     // mentions the section topic; keep those for the signature rules below.
+    { key: 'sexualOrientation', re: /sexual orientation/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.sexualOrientation || 'Other' },
+    { key: 'communities', re: /communit(y|ies)[a-z ]{0,30}belong|belong[a-z ]{0,30}communit(y|ies)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.communities || 'None of the above' },
     { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender|(^|\s)date(\s|$)|signature/, get: (p) => p.gender },
     { key: 'hispanic', re: /hispanic|latin/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
     { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic|(^|\s)date(\s|$)|signature/, get: (p) => p.race },
@@ -914,31 +916,49 @@
 
         // ---- checkboxes ----
         if (type === 'checkbox') {
-          // Several checkboxes sharing a name = a "check all that apply"
-          // question; use the group's question text, like radio groups.
-          if (el.name) {
-            const groupKey = (el.form ? 'f' : 'd') + ':' + el.name;
+          // "Check all that apply" groups come in two shapes: checkboxes
+          // sharing a fieldset (Ashby names each checkbox after its own
+          // option, so names are useless there and even collide across
+          // questions — three separate "Other" boxes), or checkboxes sharing
+          // a name (Lever's cards[uuid][field][]). Fieldset wins; a shared
+          // name only counts when all the boxes sit in the same fieldset
+          // context.
+          let boxes = null;
+          let groupKey = null;
+          const fsGroup = el.closest('fieldset');
+          if (fsGroup) {
+            const inFs = [...fsGroup.querySelectorAll('input[type="checkbox"]')].filter(isUsable);
+            if (inFs.length > 1) {
+              boxes = inFs;
+              groupKey = fsGroup;
+            }
+          }
+          if (!boxes && el.name) {
+            const root = el.form || el.getRootNode();
+            const named = [...root.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`)].filter(isUsable);
+            if (named.length > 1 && new Set(named.map((b) => b.closest('fieldset'))).size === 1) {
+              boxes = named;
+              groupKey = (el.form ? 'f' : 'd') + ':' + el.name;
+            }
+          }
+          if (boxes) {
             if (seenCheckboxGroups.has(groupKey)) continue;
             seenCheckboxGroups.add(groupKey);
-            const root = el.form || el.getRootNode();
-            const boxes = [...root.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(el.name)}"]`)].filter(isUsable);
-            if (boxes.length > 1) {
-              let groupValue = null;
-              for (const groupHay of groupHays(boxes)) {
-                groupValue = customAnswerFor(groupHay, profile);
-                if (!groupValue && !CONSENT_RE.test(groupHay)) {
-                  const resolved = resolveValue(groupHay, profile);
-                  if (resolved) groupValue = resolved.value;
-                }
-                if (groupValue) break;
+            let groupValue = null;
+            for (const groupHay of groupHays(boxes)) {
+              groupValue = customAnswerFor(groupHay, profile);
+              if (!groupValue && !CONSENT_RE.test(groupHay)) {
+                const resolved = resolveValue(groupHay, profile);
+                if (resolved) groupValue = resolved.value;
               }
-              if (groupValue) {
-                stats.matched++;
-                if (fillCheckboxGroup(boxes, groupValue)) stats.filled++;
-              }
-              if (auto) boxes.forEach(autoMark);
-              continue;
+              if (groupValue) break;
             }
+            if (groupValue) {
+              stats.matched++;
+              if (fillCheckboxGroup(boxes, groupValue)) stats.filled++;
+            }
+            if (auto) boxes.forEach(autoMark);
+            continue;
           }
           // Single checkbox: explicit custom answers always apply; built-in
           // rules apply too, but never to consent/terms boxes.

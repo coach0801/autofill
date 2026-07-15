@@ -173,7 +173,27 @@
             <option>Prefer not to say</option>
           </select>
         </label>
+        <label>Sexual orientation
+          <select id="sexualOrientation">
+            <option value="">(default: Other)</option>
+            <option>Heterosexual / straight</option>
+            <option>Gay</option>
+            <option>Lesbian</option>
+            <option>Bisexual</option>
+            <option>Queer</option>
+            <option>Other</option>
+            <option>I prefer not to answer</option>
+          </select>
+        </label>
+        <label>Communities you belong to
+          <input type="text" id="communities" placeholder="default: None of the above" autocomplete="off" />
+        </label>
       </div>
+      <p class="hint">
+        "Sexual orientation" and "Communities" cover "select all that apply" demographic questions
+        (Ashby and similar). Separate multiple communities with ";". When left blank, "Other" /
+        "None of the above" are selected.
+      </p>
     </section>
 
     <section>
