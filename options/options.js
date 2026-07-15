@@ -11,6 +11,7 @@
     'school', 'degree', 'major', 'graduationYear', 'gpa',
     'authorizedToWork', 'requiresSponsorship', 'willingToRelocate', 'over18',
     'gender', 'hispanic', 'race', 'veteran', 'disability', 'sexualOrientation', 'communities',
+    'transgender', 'ageRange', 'contactConsent',
   ];
 
   const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8 MB

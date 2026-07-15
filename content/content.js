@@ -720,6 +720,9 @@
     // EEO sections end with "Name ___ Date ___" signature rows whose context
     // mentions the section topic; keep those for the signature rules below.
     { key: 'sexualOrientation', re: /sexual orientation/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.sexualOrientation || 'Other' },
+    { key: 'transgender', re: /transgender/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.transgender || 'No' },
+    { key: 'ageRange', re: /current age|age range|how old|what is your age/, not: /(^|\s)date(\s|$)|signature|\b18\b/, get: (p) => p.ageRange || '30-39' },
+    { key: 'contactConsent', re: /about (job|future|other|new) opportunit|future opportunit|talent (community|pool|network)|keep (my|your) (data|resume|information)/, get: (p) => p.contactConsent || 'Yes' },
     { key: 'communities', re: /communit(y|ies)[a-z ]{0,30}belong|belong[a-z ]{0,30}communit(y|ies)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.communities || 'None of the above' },
     { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender|(^|\s)date(\s|$)|signature/, get: (p) => p.gender },
     { key: 'hispanic', re: /hispanic|latin/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
@@ -961,9 +964,20 @@
             continue;
           }
           // Single checkbox: explicit custom answers always apply; built-in
-          // rules apply too, but never to consent/terms boxes.
+          // rules apply too, but never to consent/terms boxes. Exception:
+          // "contact me about future opportunities" agreements are governed
+          // by the configurable contactConsent setting — its question usually
+          // sits OUTSIDE the checkbox label, so that check alone also looks
+          // at the surrounding question text (a wider net kept away from
+          // custom answers/rules, which would absorb neighboring options).
           const hay = getHaystack(el);
           let value = customAnswerFor(hay, profile);
+          if (!value) {
+            const contextHay = hay + ' ' + norm(findNearbyText(el) + ' ' + headingContext(el));
+            if (/about (job|future|other|new) opportunit|future opportunit|talent (community|pool|network)/.test(contextHay)) {
+              value = profile.contactConsent || 'Yes';
+            }
+          }
           if (!value && !CONSENT_RE.test(hay)) {
             const resolved = resolveValue(hay, profile);
             if (resolved) value = resolved.value;
@@ -1171,14 +1185,16 @@
   async function initAutoRun() {
     const { profile, settings } = await getState();
     if (!profile || !settings || !settings.autoFill) return;
-    // Many ATS forms render/expand after load — watch for late fields for a
-    // while. Register the observer BEFORE the first pass so fields added while
-    // that pass runs are not missed.
+    // Many ATS forms render sections lazily — Ashby's demographic survey can
+    // mount only when scrolled into view, minutes after load. Observe
+    // indefinitely: passes are cheap once everything is filled, and the
+    // per-element retry cap keeps this from ever looping on one field.
+    // Register the observer BEFORE the first pass so fields added while that
+    // pass runs are not missed.
     if (document.body) {
       const debounced = debounce(autoPass, 900);
       const mo = new MutationObserver(debounced);
       mo.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => mo.disconnect(), 45000);
     }
     await sleep(700);
     await autoPass();
