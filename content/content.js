@@ -374,6 +374,23 @@
     return alts;
   }
 
+  /**
+   * Numeric range in a normalized string: "19 24" (was "19-24"), "under 30",
+   * "60 or older", "65+", or a bare age. Capped at 3 digits so salaries and
+   * years never parse.
+   */
+  function parseNumRange(n) {
+    let m = n.match(/^(\d{1,3}) (\d{1,3})$/);
+    if (m) return [+m[1], +m[2]];
+    m = n.match(/^under (\d{1,3})$/);
+    if (m) return [0, +m[1] - 1];
+    m = n.match(/^(\d{1,3})(?:\+| or (?:older|above|more))$/);
+    if (m) return [+m[1], 200];
+    m = n.match(/^(\d{1,3})$/);
+    if (m) return [+m[1], +m[1]];
+    return null;
+  }
+
   /** How well does candidate option text match the desired value? 0..100 */
   function matchScore(optionText, desired) {
     let best = scoreCore(optionText, desired);
@@ -381,6 +398,17 @@
     for (const alt of answerAlternatives(desired)) {
       const s = scoreCore(optionText, alt);
       if (s > best) best = s;
+    }
+    // Age buckets differ between forms ("30-39" stored vs a "35-44" option):
+    // prefer the option containing the desired range's upper end.
+    if (best < 85) {
+      const dr = parseNumRange(norm(desired));
+      const or = parseNumRange(norm(optionText));
+      if (dr && or) {
+        if (dr[1] >= or[0] && dr[1] <= or[1]) best = Math.max(best, 85);
+        else if (dr[0] >= or[0] && dr[0] <= or[1]) best = Math.max(best, 75);
+        else if (dr[0] <= or[1] && dr[1] >= or[0]) best = Math.max(best, 65);
+      }
     }
     return best;
   }
