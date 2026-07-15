@@ -195,7 +195,15 @@
     if (aria) return aria;
     let sib = input.nextSibling;
     while (sib && !(sib.textContent || '').trim()) sib = sib.nextSibling;
-    if (sib) return (sib.textContent || '').trim();
+    if (sib && (sib.textContent || '').trim()) return (sib.textContent || '').trim();
+    // Styled widgets (Ashby, ...) hide the input inside a small wrapper whose
+    // enclosing option element holds the text. Only trust an ancestor that
+    // contains no OTHER radios/checkboxes, or we'd absorb sibling options.
+    for (let p = input.parentElement, d = 0; p && d < 3; p = p.parentElement, d++) {
+      if (p.querySelectorAll('input[type="radio"], input[type="checkbox"]').length > 1) break;
+      const t = cleanText(p).trim();
+      if (t && t.length <= 60) return t;
+    }
     return input.value || '';
   }
 
@@ -683,7 +691,15 @@
     // EEO / self-identification questions come before work-detail rules: their
     // surrounding legalese often contains words like "compensation" that would
     // otherwise trigger the salary rule.
-    { key: 'pronouns', re: /pronoun/, get: (p) => p.pronouns },
+    {
+      key: 'pronouns',
+      re: /pronoun/,
+      // Fall back to pronouns implied by the configured gender so forms like
+      // Ashby's He/Him | She/Her | They/Them picker still get an answer.
+      get: (p) => p.pronouns
+        || ({ male: 'He/Him', female: 'She/Her', 'non binary': 'They/Them' })[norm(p.gender)]
+        || '',
+    },
     { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender/, get: (p) => p.gender },
     { key: 'hispanic', re: /hispanic|latin/, get: (p) => p.hispanic },
     { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic/, get: (p) => p.race },
@@ -718,7 +734,7 @@
         || `Dear Hiring Manager,\n\nI am excited to apply for the {job_title} position. My background and experience align closely with the requirements of this role, and I am confident I can contribute meaningfully to your team.\n\nThank you for your time and consideration.\n\nSincerely,\n${[p.firstName, p.lastName].filter(Boolean).join(' ')}`,
     },
     { key: 'howDidYouHear', re: /how did you (hear|find|learn)|hear about (us|this)|referral source|where did you (hear|find)/, get: (p) => p.howDidYouHear },
-    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
+    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
     { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
@@ -932,7 +948,64 @@
         // keep going — one bad field must not stop the pass
       }
     }
+
+    await fillButtonGroups(profile, stats, auto);
     return stats;
+  }
+
+  /** Button texts that mean navigation/actions, never answers. */
+  const ACTION_BTN_RE = /submit|apply|continue|next|back|cancel|save|upload|attach|clear|remove|search|sign|log ?in|close|edit|delete|add|locate|browse|dropbox|drive|manual/;
+
+  /**
+   * Some ATSes (Ashby yes/no widgets, ...) render choice questions as a row
+   * of <button>s with no inputs at all. Fill them when the nearby question
+   * text resolves to a value and an option matches it strongly.
+   */
+  async function fillButtonGroups(profile, stats, auto) {
+    const seenContainers = new Set();
+    for (const btn of document.querySelectorAll('button')) {
+      try {
+        const container = btn.parentElement;
+        if (!container || seenContainers.has(container)) continue;
+        seenContainers.add(container);
+        // Never risk submitting a real form.
+        if (btn.form && btn.type !== 'button') continue;
+        const opts = [...container.children].filter((c) => c.tagName === 'BUTTON' && isElementVisible(c));
+        if (opts.length < 2 || opts.length > 6) continue;
+        const texts = opts.map((o) => (o.textContent || '').trim());
+        if (texts.some((t) => !t || t.length > 30 || ACTION_BTN_RE.test(norm(t)))) continue;
+        if (auto && autoDone(container)) continue;
+        // Already answered?
+        if (opts.some((o) => o.getAttribute('aria-pressed') === 'true'
+          || o.getAttribute('aria-checked') === 'true'
+          || /selected|active|checked/i.test(String(o.className)))) continue;
+
+        const hay = norm(findNearbyText(container) + ' ' + headingContext(container));
+        if (!hay) continue;
+        let value = customAnswerFor(hay, profile);
+        if (!value && !CONSENT_RE.test(hay)) {
+          const resolved = resolveValue(hay, profile);
+          if (resolved) value = resolved.value;
+        }
+        if (auto) autoMark(container);
+        if (!value) continue;
+
+        let best = null;
+        let bestScore = 0;
+        for (const o of opts) {
+          const s = matchScore((o.textContent || '').trim(), value);
+          if (s > bestScore) { best = o; bestScore = s; }
+        }
+        stats.matched++;
+        if (best && bestScore >= 80) {
+          pointerSequence(best);
+          flash(best);
+          stats.filled++;
+        }
+      } catch (e) {
+        // keep going
+      }
+    }
   }
 
   // ---------------------------------------------------------------------
