@@ -367,6 +367,10 @@
     const fg = ALIAS_INDEX.get(first);
     if (fg === ALIAS_INDEX.get('no') && d !== 'no') alts.push('No');
     if (fg === ALIAS_INDEX.get('yes') && d !== 'yes') alts.push('Yes');
+    // An "Other" answer on a list without an Other option falls back to the
+    // decline-to-answer family ("I don't wish to answer", ...). The real
+    // "Other" option still wins outright when present (exact match = 100).
+    if (d === 'other') alts.push('Prefer not to say');
     return alts;
   }
 
