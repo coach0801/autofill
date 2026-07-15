@@ -652,7 +652,9 @@
   function comboboxHasValue(input) {
     if (input.value && input.value.trim()) return true;
     const scope = input.closest('.select__control, [class*="control"]') || input.parentElement?.parentElement;
-    return !!(scope && scope.querySelector('.select__single-value, [class*="single-value"]'));
+    // single-select values render as a "single-value" node; multi-selects
+    // render chips ("multi-value") — both mean the question is answered.
+    return !!(scope && scope.querySelector('.select__single-value, [class*="single-value"], .select__multi-value, [class*="multi-value"]'));
   }
 
   /** Best-effort for React-style autocomplete comboboxes (location, country, ...). */
