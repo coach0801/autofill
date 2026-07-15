@@ -28,6 +28,16 @@
   const autoDone = (el) => (autoTries.get(el) || 0) >= MAX_AUTO_TRIES;
   const autoMark = (el) => autoTries.set(el, (autoTries.get(el) || 0) + 1);
 
+  /**
+   * Text values we set that still need re-affirming on a later pass. A fill
+   * that lands BEFORE React hydration leaves the text visible in the DOM but
+   * absent from the app's state (React initializes its value tracker to the
+   * already-present text, so it never sees a change and submit reports the
+   * field as missing). Once the page has settled, re-setting the same value
+   * through a real change cycle registers it.
+   */
+  const pendingReaffirm = new WeakMap();
+
   // ---------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------
@@ -444,7 +454,27 @@
     setNativeValue(el, v);
     fireEvents(el);
     flash(el);
+    pendingReaffirm.set(el, v);
     return true;
+  }
+
+  /**
+   * Re-register a previously filled value with the page's framework (see
+   * pendingReaffirm). The entry is kept so every remaining pass re-affirms —
+   * an early pass can fire before the framework attaches its listeners, and
+   * only a later one lands; the per-element pass cap bounds the repeats.
+   */
+  function reaffirmText(el) {
+    const v = pendingReaffirm.get(el);
+    if (v === undefined) return;
+    if (el.value !== v) {
+      pendingReaffirm.delete(el); // user changed it — leave alone
+      return;
+    }
+    setNativeValue(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    setNativeValue(el, v);
+    fireEvents(el);
   }
 
   function fillSelect(select, desired) {
@@ -1098,6 +1128,11 @@
           comboboxes.push(el);
           continue;
         }
+        if (pendingReaffirm.has(el)) {
+          reaffirmText(el);
+          if (auto) autoMark(el);
+          continue;
+        }
         const hay = getHaystack(el);
         const resolved = resolveValue(hay, profile);
         if (!resolved) continue;
@@ -1285,6 +1320,11 @@
     }
     await sleep(700);
     await autoPass();
+    // Guaranteed settle passes: hydration can attach framework listeners
+    // without mutating the DOM, so the observer alone might never re-run and
+    // pre-hydration fills would stay unregistered (see pendingReaffirm).
+    setTimeout(autoPass, 3000);
+    setTimeout(autoPass, 8000);
   }
 
   // ---------------------------------------------------------------------
