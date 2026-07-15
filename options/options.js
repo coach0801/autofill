@@ -10,6 +10,7 @@
     'noticePeriod', 'availableDate', 'howDidYouHear', 'coverLetter',
     'school', 'degree', 'major', 'graduationYear', 'gpa',
     'authorizedToWork', 'requiresSponsorship', 'willingToRelocate', 'over18',
+    'startImmediately', 'teamLeadExperience',
     'gender', 'hispanic', 'race', 'veteran', 'disability', 'sexualOrientation', 'communities',
     'transgender', 'ageRange', 'contactConsent',
   ];

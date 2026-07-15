@@ -776,6 +776,8 @@
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
     { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
+    { key: 'startImmediately', re: /start immediately|immediate start|immediately available|available immediately/, get: (p) => p.startImmediately || 'Yes' },
+    { key: 'teamLeadExperience', re: /experience as a (team )?lead|team lead or manager|lead or manager|people manage(ment|r)|managed? a team/, get: (p) => p.teamLeadExperience },
     // EEO sections end with "Name ___ Date ___" signature rows whose context
     // mentions the section topic; keep those for the signature rules below.
     { key: 'sexualOrientation', re: /sexual orientation/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.sexualOrientation || 'Other' },
@@ -823,7 +825,7 @@
     },
     { key: 'signature', re: /signature/, not: /date/, get: (p) => [properCase(p.firstName), properCase(p.lastName)].filter(Boolean).join(' ') },
     { key: 'school', re: /school|university|college|institution|alma mater/, get: (p) => p.school },
-    { key: 'degree', re: /degree|qualification|education level|highest level of education/, get: (p) => p.degree },
+    { key: 'degree', re: /degree|qualification|education level|level of education|highest education|education (have you )?completed/, get: (p) => p.degree },
     { key: 'major', re: /\bmajor\b|field of study|discipline|concentration|area of study/, get: (p) => p.major },
     { key: 'graduationYear', re: /graduation|grad year|year of completion/, get: (p) => p.graduationYear },
     { key: 'gpa', re: /\bgpa\b|grade point/, get: (p) => p.gpa },
