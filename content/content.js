@@ -271,6 +271,8 @@
     ['south korea', 'korea republic of', 'republic of korea', 'korea'],
     ['male', 'man'],
     ['female', 'woman'],
+    ['i am not a protected veteran', 'i am not a veteran', 'not a protected veteran', 'not a veteran', 'no i am not a protected veteran'],
+    ['i am a veteran', 'i am a protected veteran', 'i identify as a veteran'],
     ['non binary', 'nonbinary', 'non binary genderqueer or gender non conforming'],
     ['prefer not to say', 'prefer not to answer', 'i don t wish to answer', 'decline to self identify', 'decline to state', 'prefer not to disclose', 'i prefer not to answer', 'i do not wish to answer'],
     // US states <-> abbreviations
@@ -299,6 +301,39 @@
     return ga !== undefined && ga === ALIAS_INDEX.get(b);
   }
 
+  /**
+   * Replace known alias phrases in a normalized string with canonical group
+   * tokens, so "decatur al usa" and "decatur alabama united states" become
+   * identical. Longest phrases first ("united states of america" wins over
+   * "united states"). Yes/no aliases are excluded (they have dedicated
+   * scoring), and ambiguous two-letter state codes ("al", "or", "in") are
+   * only replaced when the string already looks location-like — i.e. some
+   * longer alias (like "usa") was replaced first.
+   */
+  let CANON_LONG = null;
+  let CANON_SHORT = null;
+  function canonicalize(s) {
+    if (!CANON_LONG) {
+      const yesNo = new Set([ALIAS_INDEX.get('yes'), ALIAS_INDEX.get('no')]);
+      const entry = (t) => [new RegExp(`(^|\\s)${escapeRegex(t)}(?=\\s|$)`, 'g'), `zz${ALIAS_INDEX.get(t)}zz`];
+      const terms = [...ALIAS_INDEX.keys()]
+        .filter((t) => !yesNo.has(ALIAS_INDEX.get(t)))
+        .sort((a, b) => b.length - a.length);
+      CANON_LONG = terms.filter((t) => t.length >= 3).map(entry);
+      CANON_SHORT = terms.filter((t) => t.length < 3).map(entry);
+    }
+    let out = s;
+    for (const [re, tok] of CANON_LONG) {
+      out = out.replace(re, `$1${tok}`);
+    }
+    if (/zz\d+zz/.test(out)) {
+      for (const [re, tok] of CANON_SHORT) {
+        out = out.replace(re, `$1${tok}`);
+      }
+    }
+    return out;
+  }
+
   const STOPWORDS = new Set(['the', 'a', 'an', 'of', 'to', 'in', 'for', 'and', 'or', 'you', 'your', 'do', 'are', 'is', 'i', 'be', 'will', 'would', 'this', 'that', 'with', 'at', 'on', 'please', 'select', 'choose', 'enter']);
 
   function significantTokens(s) {
@@ -321,12 +356,18 @@
       return 0;
     }
 
+    // Compare canonical forms so multi-word aliases inside longer strings
+    // line up ("Decatur, AL, USA" vs "Decatur, Alabama, United States").
+    const oc = canonicalize(o);
+    const dc = canonicalize(d);
+    if (oc === dc) return 94;
+
     // Whole-phrase containment (word-boundary, so "no" never matches "north").
-    if (d.length >= 3) {
-      const re = new RegExp(`(^|\\s)${escapeRegex(d)}(\\s|$)`);
-      if (re.test(o)) return 85;
-      const reInv = new RegExp(`(^|\\s)${escapeRegex(o)}(\\s|$)`);
-      if (o.length >= 3 && reInv.test(d)) return 75;
+    if (dc.length >= 3) {
+      const re = new RegExp(`(^|\\s)${escapeRegex(dc)}(\\s|$)`);
+      if (re.test(oc)) return 85;
+      const reInv = new RegExp(`(^|\\s)${escapeRegex(oc)}(\\s|$)`);
+      if (oc.length >= 3 && reInv.test(dc)) return 75;
     }
 
     // Yes/No answers against long option sentences ("Yes, I am authorized...").
@@ -336,11 +377,11 @@
       if (ALIAS_INDEX.get(firstTok) === dGroup) return 82;
     }
 
-    // Token overlap.
-    const oTokens = new Set(o.split(' '));
-    const dTokens = significantTokens(desired);
+    // Token overlap on canonical tokens.
+    const oTokens = new Set(oc.split(' '));
+    const dTokens = dc.split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
     if (!dTokens.length) return 0;
-    const hit = dTokens.filter((t) => oTokens.has(t) || oTokens.has(ALIAS_GROUPS[ALIAS_INDEX.get(t)]?.[0])).length;
+    const hit = dTokens.filter((t) => oTokens.has(t)).length;
     return Math.round((hit / dTokens.length) * 70);
   }
 
@@ -558,12 +599,17 @@
   async function fillCombobox(input, desired, comboIndex) {
     if (comboboxHasValue(input)) return false;
     // Open the menu via the widget's control, then type the desired text.
+    // Key events accompany the input event: some widgets (Lever's location
+    // lookup) only run their search on keyup.
     const typeInto = (el, text) => {
       const control = el.closest('.select__control, [class*="control"]') || el.parentElement || el;
       pointerSequence(control);
       el.focus();
       setNativeValue(el, text);
+      const last = text.slice(-1);
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: last, bubbles: true }));
       el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: last, bubbles: true }));
       return control;
     };
     let control = typeInto(input, desired);
@@ -575,7 +621,7 @@
     let best = null;
     let sawOptions = false;
     let retyped = false;
-    for (let waited = 0; waited < 4000; waited += 250) {
+    for (let waited = 0; waited < 6000; waited += 250) {
       await sleep(250);
       if (!input.isConnected) {
         const fresh = freshCombobox(input, comboIndex);
@@ -594,6 +640,12 @@
       if (!options.length && scope !== document) {
         options = [...document.querySelectorAll('[role="option"]')].filter(isElementVisible);
       }
+      if (!options.length && input.parentElement) {
+        // Non-ARIA typeaheads (Lever): suggestion rows live in a sibling
+        // dropdown container.
+        options = [...input.parentElement.querySelectorAll('[class*="dropdown-results"] > *, [class*="dropdown"] li')]
+          .filter((n) => isElementVisible(n) && (n.textContent || '').trim());
+      }
       if (options.length) sawOptions = true;
       let bestScore = 0;
       best = null;
@@ -609,9 +661,7 @@
       // desired value.
       if (!sawOptions && !retyped && waited >= 1750 && desired.includes(',')) {
         retyped = true;
-        const short = desired.split(',')[0].trim();
-        setNativeValue(input, short);
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: short }));
+        typeInto(input, desired.split(',')[0].trim());
       }
     }
 
@@ -679,18 +729,27 @@
   // Field rules: what is this field asking for?
   // ---------------------------------------------------------------------
 
+  /** "GRAVES" (all-caps profile data) -> "Graves"; mixed case passes through. */
+  function properCase(v) {
+    const s = (v || '').toString().trim();
+    if (s.length > 1 && s === s.toUpperCase() && /[A-Z]/.test(s)) {
+      return s.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    }
+    return s;
+  }
+
   // Order matters: more specific rules first. `re` is tested against the
   // normalized haystack; `not` vetoes a match.
   const RULES = [
     { key: 'email', re: /e ?mail/, get: (p) => p.email },
-    { key: 'firstName', re: /first ?name|given ?name|\bfname\b|\bforename\b/, not: /referr/, get: (p) => p.firstName },
-    { key: 'middleName', re: /middle ?name|\bmname\b/, not: /referr/, get: (p) => p.middleName },
-    { key: 'lastName', re: /last ?name|family ?name|\bsurname\b|\blname\b/, not: /referr/, get: (p) => p.lastName },
+    { key: 'firstName', re: /first ?name|given ?name|\bfname\b|\bforename\b/, not: /referr/, get: (p) => properCase(p.firstName) },
+    { key: 'middleName', re: /middle ?name|\bmname\b/, not: /referr/, get: (p) => properCase(p.middleName) },
+    { key: 'lastName', re: /last ?name|family ?name|\bsurname\b|\blname\b/, not: /referr/, get: (p) => properCase(p.lastName) },
     {
       key: 'fullName',
       re: /full ?name|legal ?name|complete name|candidate name|applicant name|your name|\bname\b/,
       not: /company|employer|school|university|user ?name|file|contact|manager|referr|reference|first|last|middle|nick|maiden|login|host/,
-      get: (p) => [p.firstName, p.lastName].filter(Boolean).join(' '),
+      get: (p) => [properCase(p.firstName), properCase(p.lastName)].filter(Boolean).join(' '),
     },
     { key: 'phoneCountryCode', re: /country code|dial(ing)? code|phone code|calling code|phone country/, get: (p) => p.phoneCountryCode },
     { key: 'phoneType', re: /phone (device )?type|type of phone/, get: () => 'Mobile' },
@@ -722,11 +781,15 @@
     { key: 'sexualOrientation', re: /sexual orientation/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.sexualOrientation || 'Other' },
     { key: 'transgender', re: /transgender/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.transgender || 'No' },
     { key: 'ageRange', re: /current age|age range|how old|what is your age/, not: /(^|\s)date(\s|$)|signature|\b18\b/, get: (p) => p.ageRange || '30-39' },
-    { key: 'contactConsent', re: /about (job|future|other|new) opportunit|future opportunit|talent (community|pool|network)|keep (my|your) (data|resume|information)/, get: (p) => p.contactConsent || 'Yes' },
+    { key: 'contactConsent', re: /contact (you|me)[a-z0-9 ]{0,40}opportunit|future (job )?opportunit|about (job|other|new) opportunit|talent (community|pool|network)|keep (my|your) (data|resume|information)/, get: (p) => p.contactConsent || 'Yes' },
     { key: 'communities', re: /communit(y|ies)[a-z ]{0,30}belong|belong[a-z ]{0,30}communit(y|ies)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.communities || 'None of the above' },
     { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender|(^|\s)date(\s|$)|signature/, get: (p) => p.gender },
-    { key: 'hispanic', re: /hispanic|latin/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
-    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic|(^|\s)date(\s|$)|signature/, get: (p) => p.race },
+    // A field labeled "Race" whose tooltip DEFINES "Hispanic or Latino"
+    // (Lever's EEO dropdown) is still a race field — so the hispanic rule
+    // yields to anything mentioning race/ethnicity, and the race rule does
+    // not veto on the word "hispanic".
+    { key: 'hispanic', re: /hispanic|latin/, not: /\brace\b|ethnicit|(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
+    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.race },
     { key: 'veteran', re: /veteran|military status/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.veteran },
     { key: 'disability', re: /disabilit|disabled|impairment/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.disability },
     { key: 'addressLine2', re: /address (line )?2|\bapt\b|apartment|suite|\bunit\b|address2/, get: (p) => p.addressLine2 },
@@ -743,6 +806,8 @@
     { key: 'currentCompany', re: /current (company|employer)|company ?name|\bemployer\b|organi[sz]ation|most recent (company|employer)/, get: (p) => p.currentCompany },
     { key: 'currentTitle', re: /(current|job|recent) title|current (role|position)|title of your (current|recent)/, get: (p) => p.currentTitle },
     { key: 'yearsOfExperience', re: /years? of (relevant |work |professional |related )*experience|experience in years|how many years/, get: (p) => p.yearsOfExperience },
+    // "Does your range reflect Base Pay or On-Target Earnings?" pickers.
+    { key: 'salaryType', re: /base (pay|salary)[a-z0-9 ]{0,60}on ?target|on ?target[a-z0-9 ]{0,60}base (pay|salary)|reflect base pay/, get: () => 'Annual Base Salary' },
     { key: 'salary', re: /salary|compensation|expected pay|pay (expectation|range)|desired pay|remuneration/, not: /veteran|military|disabilit/, get: (p) => p.salaryExpectation },
     { key: 'noticePeriod', re: /notice period|weeks? of notice/, get: (p) => p.noticePeriod },
     { key: 'availableDate', re: /start date|available to start|earliest (start|date)|availability date|date available|when can you (start|join)/, get: (p) => p.availableDate },
@@ -756,7 +821,7 @@
         return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
       },
     },
-    { key: 'signature', re: /signature/, not: /date/, get: (p) => [p.firstName, p.lastName].filter(Boolean).join(' ') },
+    { key: 'signature', re: /signature/, not: /date/, get: (p) => [properCase(p.firstName), properCase(p.lastName)].filter(Boolean).join(' ') },
     { key: 'school', re: /school|university|college|institution|alma mater/, get: (p) => p.school },
     { key: 'degree', re: /degree|qualification|education level|highest level of education/, get: (p) => p.degree },
     { key: 'major', re: /\bmajor\b|field of study|discipline|concentration|area of study/, get: (p) => p.major },
@@ -827,9 +892,15 @@
 
   function isCombobox(el) {
     if (el.tagName !== 'INPUT') return false;
-    return el.getAttribute('role') === 'combobox'
+    if (el.getAttribute('role') === 'combobox'
       || el.getAttribute('aria-autocomplete') === 'list'
-      || (el.closest('[role="combobox"]') !== null && el.getAttribute('aria-expanded') !== null);
+      || (el.closest('[role="combobox"]') !== null && el.getAttribute('aria-expanded') !== null)) {
+      return true;
+    }
+    // Non-ARIA typeahead (Lever's location widget): a plain text input with a
+    // dropdown container as a sibling.
+    const p = el.parentElement;
+    return !!(p && p.querySelector(':scope > [class*="dropdown"]'));
   }
 
   // ---------------------------------------------------------------------
@@ -974,7 +1045,7 @@
           let value = customAnswerFor(hay, profile);
           if (!value) {
             const contextHay = hay + ' ' + norm(findNearbyText(el) + ' ' + headingContext(el));
-            if (/about (job|future|other|new) opportunit|future opportunit|talent (community|pool|network)/.test(contextHay)) {
+            if (/contact (you|me)[a-z0-9 ]{0,40}opportunit|future (job )?opportunit|about (job|other|new) opportunit|talent (community|pool|network)/.test(contextHay)) {
               value = profile.contactConsent || 'Yes';
             }
           }
