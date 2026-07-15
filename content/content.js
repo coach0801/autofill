@@ -350,8 +350,38 @@
     return norm(s).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
   }
 
+  /**
+   * Alternative phrasings of an answer for questions asked differently:
+   * demographic surveys ask "Are you a veteran?" with Yes/No options, while
+   * the stored EEO answer is a full sentence.
+   */
+  function answerAlternatives(desired) {
+    const d = norm(desired);
+    const alts = [];
+    const g = ALIAS_INDEX.get(d);
+    if (g === ALIAS_INDEX.get('i am not a protected veteran')) alts.push('No');
+    if (g === ALIAS_INDEX.get('i am a veteran')) alts.push('Yes');
+    // "No, I do not have a disability..." should satisfy a bare Yes/No
+    // question; any stored sentence leading with yes/no gets the bare form.
+    const first = d.split(' ')[0];
+    const fg = ALIAS_INDEX.get(first);
+    if (fg === ALIAS_INDEX.get('no') && d !== 'no') alts.push('No');
+    if (fg === ALIAS_INDEX.get('yes') && d !== 'yes') alts.push('Yes');
+    return alts;
+  }
+
   /** How well does candidate option text match the desired value? 0..100 */
   function matchScore(optionText, desired) {
+    let best = scoreCore(optionText, desired);
+    if (best >= 94) return best;
+    for (const alt of answerAlternatives(desired)) {
+      const s = scoreCore(optionText, alt);
+      if (s > best) best = s;
+    }
+    return best;
+  }
+
+  function scoreCore(optionText, desired) {
     const o = norm(optionText);
     const d = norm(desired);
     if (!o || !d) return 0;
@@ -642,33 +672,48 @@
       el.dispatchEvent(new KeyboardEvent('keyup', { key: last, bubbles: true }));
       return control;
     };
-    let control = typeInto(input, desired);
+    const openMenu = (el) => {
+      const control = el.closest('.select__control, [class*="control"]') || el.parentElement || el;
+      pointerSequence(control);
+      el.focus();
+      return control;
+    };
 
-    // Options can come from an async source (Greenhouse's location API takes
-    // ~2-3s), so poll instead of a single fixed wait. React apps may replace
-    // the input mid-poll (re-render); re-locate it and re-type if so.
+    // Phase 0: open the menu WITHOUT typing. Static option lists often hold
+    // synonyms of the desired value ("Man" for a stored "Male") that
+    // substring-filtering by our typed text would hide entirely. Async
+    // search widgets show nothing until typed at, so phase 1 types the full
+    // desired text, and phase 2 retries with just the first comma segment.
+    let control = openMenu(input);
     const listId = (input.getAttribute('aria-controls') || input.getAttribute('aria-owns') || '').split(/\s+/)[0];
     let best = null;
-    let sawOptions = false;
+    let typed = false;
     let retyped = false;
-    for (let waited = 0; waited < 6000; waited += 250) {
+    let sawOptionsSinceType = false;
+    // Wall-clock bound: throttled background tabs stretch each sleep, so an
+    // iteration-counted loop could grind for minutes.
+    const started = Date.now();
+    while (Date.now() - started < 8000) {
       await sleep(250);
       if (!input.isConnected) {
         const fresh = freshCombobox(input, comboIndex);
         if (!fresh || !fresh.isConnected) break;
         input = fresh;
         if (comboboxHasValue(input)) return true; // selection survived the re-render
-        control = typeInto(input, retyped ? desired.split(',')[0].trim() : desired);
+        control = typed ? typeInto(input, retyped ? desired.split(',')[0].trim() : desired) : openMenu(input);
       }
+      // Options are looked up nearest-first: the widget's own listbox (by
+      // aria-controls), then its own wrapper. Document-wide is the LAST
+      // resort (portaled menus) — multi-select menus stay open after a
+      // click, so a global query can see a PREVIOUS question's options.
       const inputRoot = input.getRootNode();
-      let scope = inputRoot.querySelector ? inputRoot : document;
+      let options = [];
       if (listId && inputRoot.getElementById) {
         const list = inputRoot.getElementById(listId);
-        if (list) scope = list;
+        if (list) options = [...list.querySelectorAll('[role="option"]')].filter(isElementVisible);
       }
-      let options = [...scope.querySelectorAll('[role="option"]')].filter(isElementVisible);
-      if (!options.length && scope !== document) {
-        options = [...document.querySelectorAll('[role="option"]')].filter(isElementVisible);
+      if (!options.length && control instanceof HTMLElement && control.parentElement) {
+        options = [...control.parentElement.querySelectorAll('[role="option"]')].filter(isElementVisible);
       }
       if (!options.length && input.parentElement) {
         // Non-ARIA typeaheads (Lever): suggestion rows live in a sibling
@@ -676,7 +721,10 @@
         options = [...input.parentElement.querySelectorAll('[class*="dropdown-results"] > *, [class*="dropdown"] li')]
           .filter((n) => isElementVisible(n) && (n.textContent || '').trim());
       }
-      if (options.length) sawOptions = true;
+      if (!options.length) {
+        options = [...(inputRoot.querySelectorAll ? inputRoot : document).querySelectorAll('[role="option"]')].filter(isElementVisible);
+      }
+      if (options.length) sawOptionsSinceType = true;
       let bestScore = 0;
       best = null;
       for (const opt of options) {
@@ -685,11 +733,12 @@
       }
       if (best && bestScore >= 60) break;
       best = null;
-      // A long query like "Decatur, Alabama, United States" can return zero
-      // suggestions from search-backed sources; halfway through, retry with
-      // just the first segment ("Decatur") and keep scoring against the full
-      // desired value.
-      if (!sawOptions && !retyped && waited >= 1750 && desired.includes(',')) {
+      const elapsed = Date.now() - started;
+      if (!typed && elapsed >= 1250) {
+        typed = true;
+        sawOptionsSinceType = false;
+        control = typeInto(input, desired);
+      } else if (typed && !retyped && !sawOptionsSinceType && elapsed >= 3500 && desired.includes(',')) {
         retyped = true;
         typeInto(input, desired.split(',')[0].trim());
       }
@@ -699,7 +748,12 @@
       pointerSequence(best);
       await sleep(150);
       if (!input.isConnected) input = freshCombobox(input, comboIndex) || input;
-      if (input.isConnected) fireEvents(input, { blur: false });
+      if (input.isConnected) {
+        fireEvents(input, { blur: false });
+        // Multi-select menus stay open after a click; close so the next
+        // combobox's option search never sees this question's menu.
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
       if (control instanceof HTMLElement && control.isConnected) flash(control);
       return true;
     }
