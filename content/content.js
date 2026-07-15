@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Job AutoFill — content script.
  *
  * Scans the page for form fields (inputs, textareas, selects, radio groups,
@@ -16,8 +16,17 @@
   if (window.__jobAutofillLoaded) return;
   window.__jobAutofillLoaded = true;
 
-  /** Elements already handled by an automatic pass (don't re-touch what the user may have edited). */
-  const autoProcessed = new WeakSet();
+  /**
+   * How many automatic passes have touched each element. React apps
+   * (job-boards.greenhouse.io, ...) hydrate after our first pass and reset
+   * every controlled field to empty, so a single-shot "already processed"
+   * mark would leave the form blank; instead each element gets a few
+   * bounded attempts (fillers still skip anything that has a value).
+   */
+  const autoTries = new WeakMap();
+  const MAX_AUTO_TRIES = 3;
+  const autoDone = (el) => (autoTries.get(el) || 0) >= MAX_AUTO_TRIES;
+  const autoMark = (el) => autoTries.set(el, (autoTries.get(el) || 0) + 1);
 
   // ---------------------------------------------------------------------
   // Utilities
@@ -360,7 +369,7 @@
       // input with just a dial code like "+1". Complete it instead of
       // treating the field as already answered.
       const dialCodeOnly = /^\+\d{0,4}$/.test(existing);
-      if (!dialCodeOnly) return norm(existing) === norm(v); // never overwrite user input
+      if (!dialCodeOnly) return false; // never overwrite user input; already-correct values don't count as new fills
       if (!v.startsWith('+') && /^[\d\s().-]{7,}$/.test(v)) v = existing + ' ' + v;
     }
     if (el.type === 'number') {
@@ -503,39 +512,93 @@
     }
   }
 
+  /**
+   * Full pointer-event sequence. react-select (used by the new Greenhouse
+   * job boards, among others) only opens its menu / commits an option for a
+   * complete pointerdown -> mousedown -> pointerup -> mouseup -> click run —
+   * a lone mousedown or click does nothing.
+   */
+  function pointerSequence(el) {
+    const r = el.getBoundingClientRect();
+    const base = {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 1,
+      clientX: r.x + Math.min(10, r.width / 2), clientY: r.y + Math.min(10, r.height / 2),
+      pointerId: 1, isPrimary: true, pointerType: 'mouse',
+    };
+    el.dispatchEvent(new PointerEvent('pointerdown', base));
+    el.dispatchEvent(new MouseEvent('mousedown', base));
+    el.dispatchEvent(new PointerEvent('pointerup', base));
+    el.dispatchEvent(new MouseEvent('mouseup', base));
+    el.dispatchEvent(new MouseEvent('click', base));
+  }
+
+  /** Has a react-select style combobox already committed a value? */
+  function comboboxHasValue(input) {
+    if (input.value && input.value.trim()) return true;
+    const scope = input.closest('.select__control, [class*="control"]') || input.parentElement?.parentElement;
+    return !!(scope && scope.querySelector('.select__single-value, [class*="single-value"]'));
+  }
+
   /** Best-effort for React-style autocomplete comboboxes (location, country, ...). */
   async function fillCombobox(input, desired) {
-    if (input.value && input.value.trim()) return false;
+    if (comboboxHasValue(input)) return false;
+    // Open the menu via the widget's control, then type the desired text.
+    const control = input.closest('.select__control, [class*="control"]') || input.parentElement || input;
+    pointerSequence(control);
     input.focus();
-    input.click();
     setNativeValue(input, desired);
     input.dispatchEvent(new InputEvent('input', { bubbles: true, data: desired }));
-    await sleep(600);
+
+    // Options can come from an async source (Greenhouse's location API takes
+    // ~2-3s), so poll instead of a single fixed wait.
     const inputRoot = input.getRootNode();
-    const listId = input.getAttribute('aria-controls') || input.getAttribute('aria-owns');
-    let scope = inputRoot.querySelector ? inputRoot : document;
-    if (listId && inputRoot.getElementById) {
-      const list = inputRoot.getElementById(listId.split(/\s+/)[0]);
-      if (list) scope = list;
-    }
-    const options = [...scope.querySelectorAll('[role="option"]')].filter(isElementVisible);
+    const listId = (input.getAttribute('aria-controls') || input.getAttribute('aria-owns') || '').split(/\s+/)[0];
     let best = null;
-    let bestScore = 0;
-    for (const opt of options) {
-      const s = matchScore(opt.textContent, desired);
-      if (s > bestScore) { best = opt; bestScore = s; }
-    }
-    if (best && bestScore >= 60) {
-      for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
-        best.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    let sawOptions = false;
+    let retyped = false;
+    for (let waited = 0; waited < 4000; waited += 250) {
+      await sleep(250);
+      let scope = inputRoot.querySelector ? inputRoot : document;
+      if (listId && inputRoot.getElementById) {
+        const list = inputRoot.getElementById(listId);
+        if (list) scope = list;
       }
-      await sleep(120);
-    } else {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      let options = [...scope.querySelectorAll('[role="option"]')].filter(isElementVisible);
+      if (!options.length && scope !== document) {
+        options = [...document.querySelectorAll('[role="option"]')].filter(isElementVisible);
+      }
+      if (options.length) sawOptions = true;
+      let bestScore = 0;
+      best = null;
+      for (const opt of options) {
+        const s = matchScore(opt.textContent, desired);
+        if (s > bestScore) { best = opt; bestScore = s; }
+      }
+      if (best && bestScore >= 60) break;
+      best = null;
+      // A long query like "Decatur, Alabama, United States" can return zero
+      // suggestions from search-backed sources; halfway through, retry with
+      // just the first segment ("Decatur") and keep scoring against the full
+      // desired value.
+      if (!sawOptions && !retyped && waited >= 1750 && desired.includes(',')) {
+        retyped = true;
+        const short = desired.split(',')[0].trim();
+        setNativeValue(input, short);
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: short }));
+      }
     }
+
+    if (best) {
+      pointerSequence(best);
+      await sleep(150);
+      fireEvents(input, { blur: false });
+      flash(control instanceof HTMLElement ? control : input);
+      return true;
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fireEvents(input);
-    flash(input);
-    return true;
+    // The typed text stays as a best effort; count it if it stuck.
+    return !!(input.value && input.value.trim());
   }
 
   // ---------------------------------------------------------------------
@@ -608,11 +671,15 @@
     { key: 'portfolio', re: /portfolio|personal (web ?site|site|url)|\bwebsite\b|\bhomepage\b|blog/, not: /company|linked ?in|git ?hub|twitter/, get: (p) => p.portfolio },
     { key: 'addressLine2', re: /address (line )?2|\bapt\b|apartment|suite|\bunit\b|address2/, get: (p) => p.addressLine2 },
     { key: 'addressLine1', re: /address|street/, not: /mail|city|state|zip|postal|country|line 2|address2/, get: (p) => p.addressLine1 },
+    // "Location (City)" style geo-autocomplete fields must resolve to the full
+    // "City, State, Country" string BEFORE the bare city rule can match, or the
+    // ambiguous city name alone picks the wrong suggestion (Decatur, Illinois
+    // instead of Decatur, Alabama).
+    { key: 'location', re: /location|where (do you|are you) (live|based|located)/, not: /office|preferred|willing/, get: (p) => [p.city, p.state, p.country].filter(Boolean).join(', ') },
     { key: 'city', re: /\bcity\b|\btown\b|locality/, get: (p) => p.city },
     { key: 'zip', re: /zip|post ?code|postal/, get: (p) => p.zip },
     { key: 'state', re: /\bstate\b|province|\bregion\b/, not: /united states|country|statement/, get: (p) => p.state },
     { key: 'country', re: /country|nationality/, not: /code|county/, get: (p) => p.country },
-    { key: 'location', re: /location|where (do you|are you) (live|based|located)/, not: /office|preferred|willing/, get: (p) => [p.city, p.state, p.country].filter(Boolean).join(', ') },
     // EEO / self-identification questions come before work-detail rules: their
     // surrounding legalese often contains words like "compensation" that would
     // otherwise trigger the salary rule.
@@ -752,7 +819,7 @@
 
     for (const el of controls) {
       try {
-        if (auto && autoProcessed.has(el)) continue;
+        if (auto && autoDone(el)) continue;
         if (!isUsable(el)) continue;
         const type = (el.type || '').toLowerCase();
         if (type === 'password' || type === 'search' || type === 'submit' || type === 'button' || type === 'image' || type === 'reset') continue;
@@ -766,7 +833,7 @@
           if (fileData && fileData.dataUrl) {
             stats.matched++;
             if (fillFile(el, fileData)) stats.filled++;
-            if (auto) autoProcessed.add(el);
+            if (auto) autoMark(el);
           }
           continue;
         }
@@ -790,7 +857,7 @@
             stats.matched++;
             if (fillRadioGroup(radios, resolved.value)) stats.filled++;
           }
-          if (auto) radios.forEach((r) => autoProcessed.add(r));
+          if (auto) radios.forEach(autoMark);
           continue;
         }
 
@@ -818,7 +885,7 @@
                 stats.matched++;
                 if (fillCheckboxGroup(boxes, groupValue)) stats.filled++;
               }
-              if (auto) boxes.forEach((b) => autoProcessed.add(b));
+              if (auto) boxes.forEach(autoMark);
               continue;
             }
           }
@@ -834,7 +901,7 @@
             stats.matched++;
             if (fillCheckbox(el, value)) stats.filled++;
           }
-          if (auto) autoProcessed.add(el);
+          if (auto) autoMark(el);
           continue;
         }
 
@@ -846,7 +913,7 @@
             stats.matched++;
             if (fillSelect(el, resolved.value)) stats.filled++;
           }
-          if (auto) autoProcessed.add(el);
+          if (auto) autoMark(el);
           continue;
         }
 
@@ -860,7 +927,7 @@
         } else if (fillText(el, resolved.value)) {
           stats.filled++;
         }
-        if (auto) autoProcessed.add(el);
+        if (auto) autoMark(el);
       } catch (e) {
         // keep going — one bad field must not stop the pass
       }
