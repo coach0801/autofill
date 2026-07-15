@@ -160,8 +160,15 @@
     }
     const wrap = el.closest('label');
     if (wrap) parts.push(cleanText(wrap));
+    const hadRealLabel = parts.some((p) => p && p.trim());
     if (el.placeholder) parts.push(el.placeholder);
-    const joined = parts.join(' ').trim();
+    let joined = parts.join(' ').trim();
+    // A generic placeholder ("Start typing...", "Select...", "Search") is not
+    // a real label — pull in the nearby question/heading text as well (Ashby's
+    // location combobox has only such a placeholder on the input itself).
+    if (!hadRealLabel && (!joined || /^(start typing|select|search|type|choose|pick|enter)\b/i.test((el.placeholder || '').trim()))) {
+      joined = (joined + ' ' + findNearbyText(el) + ' ' + headingContext(el)).trim();
+    }
     if (joined) return joined;
     return findNearbyText(el);
   }
@@ -548,24 +555,36 @@
   }
 
   /** Best-effort for React-style autocomplete comboboxes (location, country, ...). */
-  async function fillCombobox(input, desired) {
+  async function fillCombobox(input, desired, comboIndex) {
     if (comboboxHasValue(input)) return false;
     // Open the menu via the widget's control, then type the desired text.
-    const control = input.closest('.select__control, [class*="control"]') || input.parentElement || input;
-    pointerSequence(control);
-    input.focus();
-    setNativeValue(input, desired);
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: desired }));
+    const typeInto = (el, text) => {
+      const control = el.closest('.select__control, [class*="control"]') || el.parentElement || el;
+      pointerSequence(control);
+      el.focus();
+      setNativeValue(el, text);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
+      return control;
+    };
+    let control = typeInto(input, desired);
 
     // Options can come from an async source (Greenhouse's location API takes
-    // ~2-3s), so poll instead of a single fixed wait.
-    const inputRoot = input.getRootNode();
+    // ~2-3s), so poll instead of a single fixed wait. React apps may replace
+    // the input mid-poll (re-render); re-locate it and re-type if so.
     const listId = (input.getAttribute('aria-controls') || input.getAttribute('aria-owns') || '').split(/\s+/)[0];
     let best = null;
     let sawOptions = false;
     let retyped = false;
     for (let waited = 0; waited < 4000; waited += 250) {
       await sleep(250);
+      if (!input.isConnected) {
+        const fresh = freshCombobox(input, comboIndex);
+        if (!fresh || !fresh.isConnected) break;
+        input = fresh;
+        if (comboboxHasValue(input)) return true; // selection survived the re-render
+        control = typeInto(input, retyped ? desired.split(',')[0].trim() : desired);
+      }
+      const inputRoot = input.getRootNode();
       let scope = inputRoot.querySelector ? inputRoot : document;
       if (listId && inputRoot.getElementById) {
         const list = inputRoot.getElementById(listId);
@@ -599,14 +618,17 @@
     if (best) {
       pointerSequence(best);
       await sleep(150);
-      fireEvents(input, { blur: false });
-      flash(control instanceof HTMLElement ? control : input);
+      if (!input.isConnected) input = freshCombobox(input, comboIndex) || input;
+      if (input.isConnected) fireEvents(input, { blur: false });
+      if (control instanceof HTMLElement && control.isConnected) flash(control);
       return true;
     }
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    fireEvents(input);
+    if (input.isConnected) {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      fireEvents(input);
+    }
     // The typed text stays as a best effort; count it if it stuck.
-    return !!(input.value && input.value.trim());
+    return !!(input.isConnected && input.value && input.value.trim());
   }
 
   // ---------------------------------------------------------------------
@@ -677,20 +699,11 @@
     { key: 'github', re: /git ?hub/, get: (p) => p.github },
     { key: 'twitter', re: /twitter/, get: (p) => p.twitter },
     { key: 'portfolio', re: /portfolio|personal (web ?site|site|url)|\bwebsite\b|\bhomepage\b|blog/, not: /company|linked ?in|git ?hub|twitter/, get: (p) => p.portfolio },
-    { key: 'addressLine2', re: /address (line )?2|\bapt\b|apartment|suite|\bunit\b|address2/, get: (p) => p.addressLine2 },
-    { key: 'addressLine1', re: /address|street/, not: /mail|city|state|zip|postal|country|line 2|address2/, get: (p) => p.addressLine1 },
-    // "Location (City)" style geo-autocomplete fields must resolve to the full
-    // "City, State, Country" string BEFORE the bare city rule can match, or the
-    // ambiguous city name alone picks the wrong suggestion (Decatur, Illinois
-    // instead of Decatur, Alabama).
-    { key: 'location', re: /location|where (do you|are you) (live|based|located)/, not: /office|preferred|willing/, get: (p) => [p.city, p.state, p.country].filter(Boolean).join(', ') },
-    { key: 'city', re: /\bcity\b|\btown\b|locality/, get: (p) => p.city },
-    { key: 'zip', re: /zip|post ?code|postal/, get: (p) => p.zip },
-    { key: 'state', re: /\bstate\b|province|\bregion\b/, not: /united states|country|statement/, get: (p) => p.state },
-    { key: 'country', re: /country|nationality/, not: /code|county/, get: (p) => p.country },
-    // EEO / self-identification questions come before work-detail rules: their
-    // surrounding legalese often contains words like "compensation" that would
-    // otherwise trigger the salary rule.
+    // SPECIFIC QUESTION RULES COME BEFORE THE GENERIC ADDRESS/COUNTRY BLOCK.
+    // Question texts casually contain those generic words — "so that they can
+    // ADDRESS you correctly" (pronouns), "work in the COUNTRY for which job
+    // you are applying" (sponsorship / authorization) — and would otherwise
+    // be answered with the user's street address or country.
     {
       key: 'pronouns',
       re: /pronoun/,
@@ -700,11 +713,28 @@
         || ({ male: 'He/Him', female: 'She/Her', 'non binary': 'They/Them' })[norm(p.gender)]
         || '',
     },
-    { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender/, get: (p) => p.gender },
-    { key: 'hispanic', re: /hispanic|latin/, get: (p) => p.hispanic },
-    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic/, get: (p) => p.race },
-    { key: 'veteran', re: /veteran|military status/, get: (p) => p.veteran },
-    { key: 'disability', re: /disabilit|disabled|impairment/, get: (p) => p.disability },
+    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
+    { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
+    { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
+    { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
+    // EEO sections end with "Name ___ Date ___" signature rows whose context
+    // mentions the section topic; keep those for the signature rules below.
+    { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender|(^|\s)date(\s|$)|signature/, get: (p) => p.gender },
+    { key: 'hispanic', re: /hispanic|latin/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
+    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /hispanic|(^|\s)date(\s|$)|signature/, get: (p) => p.race },
+    { key: 'veteran', re: /veteran|military status/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.veteran },
+    { key: 'disability', re: /disabilit|disabled|impairment/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.disability },
+    { key: 'addressLine2', re: /address (line )?2|\bapt\b|apartment|suite|\bunit\b|address2/, get: (p) => p.addressLine2 },
+    { key: 'addressLine1', re: /address|street/, not: /mail|city|state|zip|postal|country|line 2|address2/, get: (p) => p.addressLine1 },
+    // "Location (City)" style geo-autocomplete fields must resolve to the full
+    // "City, State, Country" string BEFORE the bare city rule can match, or the
+    // ambiguous city name alone picks the wrong suggestion (Decatur, Illinois
+    // instead of Decatur, Alabama).
+    { key: 'location', re: /location|where (do you|are you) (live|based|located)|enter your city|city[a-z ]{0,24}(region|state)[a-z ]{0,24}(and )?country/, not: /office|preferred|willing/, get: (p) => [p.city, p.state, p.country].filter(Boolean).join(', ') },
+    { key: 'city', re: /\bcity\b|\btown\b|locality/, get: (p) => p.city },
+    { key: 'zip', re: /zip|post ?code|postal/, get: (p) => p.zip },
+    { key: 'state', re: /\bstate\b|province|\bregion\b/, not: /united states|country|statement/, get: (p) => p.state },
+    { key: 'country', re: /country|nationality/, not: /code|county/, get: (p) => p.country },
     { key: 'currentCompany', re: /current (company|employer)|company ?name|\bemployer\b|organi[sz]ation|most recent (company|employer)/, get: (p) => p.currentCompany },
     { key: 'currentTitle', re: /(current|job|recent) title|current (role|position)|title of your (current|recent)/, get: (p) => p.currentTitle },
     { key: 'yearsOfExperience', re: /years? of (relevant |work |professional |related )*experience|experience in years|how many years/, get: (p) => p.yearsOfExperience },
@@ -734,10 +764,6 @@
         || `Dear Hiring Manager,\n\nI am excited to apply for the {job_title} position. My background and experience align closely with the requirements of this role, and I am confident I can contribute meaningfully to your team.\n\nThank you for your time and consideration.\n\nSincerely,\n${[p.firstName, p.lastName].filter(Boolean).join(' ')}`,
     },
     { key: 'howDidYouHear', re: /how did you (hear|find|learn)|hear about (us|this)|referral source|where did you (hear|find)/, get: (p) => p.howDidYouHear },
-    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
-    { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
-    { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
-    { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
   ];
 
   /** Consent-style checkboxes we never touch unless a custom answer explicitly matches. */
@@ -831,10 +857,19 @@
 
     const seenRadioGroups = new Set();
     const seenCheckboxGroups = new Set();
+    const comboboxes = [];
     const controls = collectControls();
 
-    for (const el of controls) {
+    for (let el of controls) {
       try {
+        // The snapshot can go stale if the page re-renders mid-pass;
+        // re-locate by id when possible, otherwise skip (a later pass
+        // catches the fresh element).
+        if (!el.isConnected) {
+          const fresh = el.id ? document.getElementById(el.id) : null;
+          if (!fresh) continue;
+          el = fresh;
+        }
         if (auto && autoDone(el)) continue;
         if (!isUsable(el)) continue;
         const type = (el.type || '').toLowerCase();
@@ -934,23 +969,64 @@
         }
 
         // ---- text-ish inputs and textareas ----
+        // Comboboxes are DEFERRED to a second phase: filling them awaits an
+        // async option lookup, and React apps (Ashby, ...) re-render the
+        // whole form meanwhile, detaching every not-yet-processed element in
+        // this snapshot. All instant fills happen first, synchronously.
+        if (isCombobox(el)) {
+          comboboxes.push(el);
+          continue;
+        }
         const hay = getHaystack(el);
         const resolved = resolveValue(hay, profile);
         if (!resolved) continue;
         stats.matched++;
-        if (isCombobox(el)) {
-          if (await fillCombobox(el, resolved.value)) stats.filled++;
-        } else if (fillText(el, resolved.value)) {
-          stats.filled++;
-        }
+        if (fillText(el, resolved.value)) stats.filled++;
         if (auto) autoMark(el);
       } catch (e) {
         // keep going — one bad field must not stop the pass
       }
     }
 
+    // ---- phase 2: comboboxes (slow, may trigger re-renders) ----
+    for (let i = 0; i < comboboxes.length; i++) {
+      try {
+        const cb = freshCombobox(comboboxes[i], i);
+        if (!cb || !cb.isConnected || !isUsable(cb)) continue;
+        if (auto && autoDone(cb)) continue;
+        const hay = getHaystack(cb);
+        const resolved = resolveValue(hay, profile);
+        if (auto) autoMark(cb);
+        if (!resolved) continue;
+        stats.matched++;
+        if (await fillCombobox(cb, resolved.value, i)) stats.filled++;
+      } catch (e) {
+        // keep going
+      }
+    }
+
     await fillButtonGroups(profile, stats, auto);
     return stats;
+  }
+
+  /** All combobox-style inputs currently in the document, in DOM order. */
+  function allComboboxes() {
+    return collectControls().filter((c) => c.tagName === 'INPUT' && isCombobox(c));
+  }
+
+  /**
+   * Re-locate a combobox input after a possible React re-render: same id if
+   * it has one, otherwise the same position among the page's comboboxes.
+   */
+  function freshCombobox(el, knownIndex) {
+    if (el && el.isConnected) return el;
+    if (el && el.id) {
+      const byId = document.getElementById(el.id);
+      if (byId) return byId;
+    }
+    const all = allComboboxes();
+    if (knownIndex !== undefined && all[knownIndex]) return all[knownIndex];
+    return all.length === 1 ? all[0] : el;
   }
 
   /** Button texts that mean navigation/actions, never answers. */
