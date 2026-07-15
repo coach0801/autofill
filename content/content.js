@@ -729,6 +729,16 @@
   // Field rules: what is this field asking for?
   // ---------------------------------------------------------------------
 
+  /**
+   * URLs can't contain whitespace — strip any (a stored "https:// linkedin
+   * .com/..." typo fails site validation) and default the scheme to https.
+   */
+  function cleanUrl(v) {
+    let s = (v || '').toString().replace(/\s+/g, '');
+    if (s && !/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s;
+  }
+
   /** "GRAVES" (all-caps profile data) -> "Graves"; mixed case passes through. */
   function properCase(v) {
     const s = (v || '').toString().trim();
@@ -754,10 +764,10 @@
     { key: 'phoneCountryCode', re: /country code|dial(ing)? code|phone code|calling code|phone country/, get: (p) => p.phoneCountryCode },
     { key: 'phoneType', re: /phone (device )?type|type of phone/, get: () => 'Mobile' },
     { key: 'phone', re: /phone|mobile|\bcell\b|telephone|\btel\b/, not: /country|extension|\bext\b|type/, get: (p) => p.phone },
-    { key: 'linkedin', re: /linked ?in/, get: (p) => p.linkedin },
-    { key: 'github', re: /git ?hub/, get: (p) => p.github },
-    { key: 'twitter', re: /twitter/, get: (p) => p.twitter },
-    { key: 'portfolio', re: /portfolio|personal (web ?site|site|url)|\bwebsite\b|\bhomepage\b|blog/, not: /company|linked ?in|git ?hub|twitter/, get: (p) => p.portfolio },
+    { key: 'linkedin', re: /linked ?in/, get: (p) => cleanUrl(p.linkedin) },
+    { key: 'github', re: /git ?hub/, get: (p) => cleanUrl(p.github) },
+    { key: 'twitter', re: /twitter/, get: (p) => cleanUrl(p.twitter) },
+    { key: 'portfolio', re: /portfolio|personal (web ?site|site|url)|\bwebsite\b|\bhomepage\b|blog/, not: /company|linked ?in|git ?hub|twitter/, get: (p) => cleanUrl(p.portfolio) },
     // SPECIFIC QUESTION RULES COME BEFORE THE GENERIC ADDRESS/COUNTRY BLOCK.
     // Question texts casually contain those generic words — "so that they can
     // ADDRESS you correctly" (pronouns), "work in the COUNTRY for which job
@@ -773,6 +783,10 @@
         || '',
     },
     { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
+    // "What type of visa sponsorship will you require?" — must outrank the
+    // generic sponsorship yes/no rule. "Not required" matches even misspelled
+    // options like "Visa Sponsorhip Not Required".
+    { key: 'visaType', re: /type of (visa )?sponsorship|sponsorship type|what visa|which visa/, get: (p) => p.visaType || 'Not required' },
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
     { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
