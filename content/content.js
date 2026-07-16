@@ -932,6 +932,10 @@
     { key: 'sexualOrientation', re: /sexual orientation/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.sexualOrientation || 'Other' },
     { key: 'transgender', re: /transgender/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.transgender || 'No' },
     { key: 'ageRange', re: /current age|age range|how old|what is your age/, not: /(^|\s)date(\s|$)|signature|\b18\b/, get: (p) => p.ageRange || '30-39' },
+    // Interview-process consents (AI transcription, call recording,
+    // notetakers) are required dropdowns on many forms; refusing usually
+    // ends the application, so default Yes — configurable.
+    { key: 'interviewConsent', re: /consent[a-z ]{0,50}(interview|transcri|record|notetaker|ai assisted)|(notetaker|transcri|ai assisted|recorded|recording)[a-z ]{0,120}consent/, get: (p) => p.interviewConsent || 'Yes' },
     { key: 'contactConsent', re: /contact (you|me)[a-z0-9 ]{0,40}opportunit|future (job )?opportunit|about (job|other|new) opportunit|talent (community|pool|network)|keep (my|your) (data|resume|information)/, get: (p) => p.contactConsent || 'Yes' },
     { key: 'communities', re: /communit(y|ies)[a-z ]{0,30}belong|belong[a-z ]{0,30}communit(y|ies)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.communities || 'None of the above' },
     { key: 'gender', re: /gender|\bsex\b/, not: /orientation|transgender|(^|\s)date(\s|$)|signature/, get: (p) => p.gender },
