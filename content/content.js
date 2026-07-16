@@ -71,7 +71,21 @@
     if (el.disabled || el.readOnly) return false;
     if (el.type === 'hidden') return false;
     if (el.type === 'file') return true;
-    return isElementVisible(el);
+    if (isElementVisible(el)) return true;
+    // Custom-styled radios/checkboxes collapse the native input to 0x0
+    // (Jobvite) or hide it behind a styled sibling — usable if their label
+    // is what the user actually sees.
+    if (el.type === 'radio' || el.type === 'checkbox') {
+      const wrap = el.closest('label');
+      if (wrap && isElementVisible(wrap)) return true;
+      if (el.id) {
+        try {
+          const lab = el.getRootNode().querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (lab && isElementVisible(lab)) return true;
+        } catch (e) { /* bad id */ }
+      }
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------
@@ -900,7 +914,10 @@
         || ({ male: 'He/Him', female: 'She/Her', 'non binary': 'They/Them' })[norm(p.gender)]
         || '',
     },
-    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, get: (p) => p.authorizedToWork },
+    // "Do you need sponsorship ... to renew your authorization to work?" is a
+    // SPONSORSHIP question despite mentioning authorization — don't answer it
+    // with the authorization Yes.
+    { key: 'authorizedToWork', re: /(legally )?authori[sz]ed to work|work authori[sz]ation|authori[sz]ation to work|proof of (work )?authori[sz]ation|eligible to work|legally (able|permitted|entitled) to work|right to work|lawfully employed/, not: /(need|require|requiring|needing)[a-z ]{0,24}sponsor|sponsorship from/, get: (p) => p.authorizedToWork },
     // "What type of visa sponsorship will you require?" — must outrank the
     // generic sponsorship yes/no rule. "Not required" matches even misspelled
     // options like "Visa Sponsorhip Not Required".
