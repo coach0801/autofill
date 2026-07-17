@@ -38,6 +38,16 @@
    */
   const pendingReaffirm = new WeakMap();
 
+  /**
+   * File inputs we attached a file to. Like text fills, an attach that lands
+   * before the page's uploader initializes is silently ignored — the file
+   * sits in the input but never uploads. If the same input still holds our
+   * file on a later pass, re-announce it once with fresh events. (Uploaders
+   * that processed the file usually replace or clear the input, so those are
+   * naturally skipped.)
+   */
+  const pendingFileReaffirm = new WeakMap();
+
   // ---------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------
@@ -923,7 +933,7 @@
     // options like "Visa Sponsorhip Not Required".
     { key: 'visaType', re: /type of (visa )?sponsorship|sponsorship type|what visa|which visa/, get: (p) => p.visaType || 'Not required' },
     { key: 'requiresSponsorship', re: /sponsor/, get: (p) => p.requiresSponsorship },
-    { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate },
+    { key: 'willingToRelocate', re: /relocat/, get: (p) => p.willingToRelocate || 'Yes' },
     { key: 'over18', re: /(over|at least|older than) (the age of )?18|18 years (of age )?or older/, get: (p) => p.over18 },
     { key: 'startImmediately', re: /start immediately|immediate start|immediately available|available immediately/, get: (p) => p.startImmediately || 'Yes' },
     { key: 'teamLeadExperience', re: /experience as a (team )?lead|team lead or manager|lead or manager|people manage(ment|r)|managed? a team/, get: (p) => p.teamLeadExperience },
@@ -1114,7 +1124,17 @@
           else if (/resume|\bcv\b|curriculum|attach|upload/.test(hay) || hay === '') fileData = profile.resumeFile;
           if (fileData && fileData.dataUrl) {
             stats.matched++;
-            if (fillFile(el, fileData)) stats.filled++;
+            if (el.files && el.files.length && pendingFileReaffirm.get(el) === el.files[0].name) {
+              // Our file is still sitting in the input from an earlier pass —
+              // the page may not have been listening yet. Re-announce on each
+              // remaining pass (the per-element pass cap bounds the repeats;
+              // uploaders that processed it replace or clear the input).
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            } else if (fillFile(el, fileData)) {
+              stats.filled++;
+              pendingFileReaffirm.set(el, fileData.name);
+            }
             if (auto) autoMark(el);
           }
           continue;
