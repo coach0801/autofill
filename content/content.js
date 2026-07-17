@@ -957,10 +957,10 @@
     // (Lever's EEO dropdown) is still a race field — so the hispanic rule
     // yields to anything mentioning race/ethnicity, and the race rule does
     // not veto on the word "hispanic".
-    { key: 'hispanic', re: /hispanic|latin/, not: /\brace\b|ethnicit|(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic },
-    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.race },
-    { key: 'veteran', re: /veteran|military status/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.veteran },
-    { key: 'disability', re: /disabilit|disabled|impairment/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.disability },
+    { key: 'hispanic', re: /hispanic|latin/, not: /\brace\b|ethnicit|(^|\s)date(\s|$)|signature/, get: (p) => p.hispanic || 'No' },
+    { key: 'race', re: /\brace\b|ethnicit|ethnic (group|background|origin)/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.race || 'White' },
+    { key: 'veteran', re: /veteran|military status/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.veteran || 'I am not a protected veteran' },
+    { key: 'disability', re: /disabilit|disabled|impairment/, not: /(^|\s)date(\s|$)|signature/, get: (p) => p.disability || 'No, I do not have a disability' },
     { key: 'addressLine2', re: /address (line )?2|\bapt\b|apartment|suite|\bunit\b|address2/, get: (p) => p.addressLine2 },
     { key: 'addressLine1', re: /address|street/, not: /mail|city|state|zip|postal|country|line 2|address2/, get: (p) => p.addressLine1 },
     // "Location (City)" style geo-autocomplete fields must resolve to the full
