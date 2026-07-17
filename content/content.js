@@ -434,6 +434,10 @@
         else if (dr[0] <= or[1] && dr[1] >= or[0]) best = Math.max(best, 65);
       }
     }
+    // An option literally named "Other" is a weak universal fallback: it wins
+    // only when the stored answer matches nothing on the list (e.g. a "How
+    // did you hear about us?" source that isn't offered).
+    if (best < 61 && /^other( please specify)?$/.test(norm(optionText))) best = 61;
     return best;
   }
 
@@ -998,7 +1002,7 @@
       get: (p) => p.coverLetter
         || `Dear Hiring Manager,\n\nI am excited to apply for the {job_title} position. My background and experience align closely with the requirements of this role, and I am confident I can contribute meaningfully to your team.\n\nThank you for your time and consideration.\n\nSincerely,\n${[p.firstName, p.lastName].filter(Boolean).join(' ')}`,
     },
-    { key: 'howDidYouHear', re: /how did you (hear|find|learn)|hear about (us|this)|referral source|where did you (hear|find)/, get: (p) => p.howDidYouHear },
+    { key: 'howDidYouHear', re: /how did you (hear|find|learn)|hear about (us|this)|referral source|where did you (hear|find)/, get: (p) => p.howDidYouHear || 'Other' },
   ];
 
   /** Consent-style checkboxes we never touch unless a custom answer explicitly matches. */
